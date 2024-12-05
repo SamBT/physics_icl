@@ -1,5 +1,5 @@
 slurm_logs/
-trainings/**
+trainings/**/*best_epoch_*.pt
 __pycache__
 **/.ipynb_checkpoints/
 nanoGPT
