@@ -1,0 +1,8 @@
+slurm_logs/
+trainings/**
+__pycache__
+**/.ipynb_checkpoints/
+nanoGPT
+logs/
+**/*.png
+**/*.pdf
