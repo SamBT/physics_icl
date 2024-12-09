@@ -119,6 +119,7 @@ class GPTConfig:
     n_embd: int = 64 # embedding dimensions
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    use_pe: bool = True # True = use positional encoding
 
 class GPT(nn.Module):
 
@@ -130,12 +131,15 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Linear(config.input_dim, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
+            #wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
             ctxe = nn.Linear(config.context_dim,config.n_embd)
         ))
+        if config.use_pe:
+            print("Using positional embedding")
+            self.transformer["wpe"] = nn.Embedding(config.block_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.input_dim, bias=False)
         
         # with weight tying when using torch.compile() some warnings get generated:
@@ -162,7 +166,7 @@ class GPT(nn.Module):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
+        if non_embedding and self.config.use_pe:
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
@@ -185,8 +189,11 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         ctx_emb = self.transformer.ctxe(context).unsqueeze(1) # context embeddings of shape (b, 1, n_embd)
         tok_emb = torch.cat([ctx_emb,tok_emb],dim=1) # full input of shape (b, t+1, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        if self. config.use_pe:
+            pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
+            x = self.transformer.drop(tok_emb + pos_emb)
+        else:
+            x = self.transformer.drop(tok_emb)
         if mask is not None:
             # pad the mask to account for additional context token at the front
             extra = torch.ones((idx.shape[0],1),dtype=torch.bool).to(device)
@@ -218,7 +225,8 @@ class GPT(nn.Module):
         # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
         self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
+        if self.config.use_pe:
+            self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
         for block in self.transformer.h:
             if hasattr(block.attn, 'bias'):
                 block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]

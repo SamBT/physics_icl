@@ -6,15 +6,23 @@ import numpy as np
 from tqdm import tqdm
 
 from model import GPT, GPTConfig
-from physics_data import RandomSHODataset, RandomSHODatasetVariableLength, RandomSHODatasetVariableLengthSmoothMass
+#from physics_data import RandomSHODataset, RandomSHODatasetVariableLength, RandomSHODatasetVariableLengthSmoothMass
+from PhysicsDatasets import SHODataset
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
 import json
 
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+    has_cuda = torch.cuda.is_available()
+    has_mps = torch.backends.mps.is_available()
+    if has_cuda:
+        device = 'cuda'
+    elif has_mps:
+        device = 'mps'
+    else:
+        device = 'cpu'
+    device_type = device # for later use in torch.autocast
 
     # high-level
     now = datetime.now()
@@ -33,27 +41,30 @@ def main():
     #masses = torch.cat([torch.arange(0.1,4.1,0.1),torch.arange(5.0,10.1,0.1)],dim=0)
     masses = [(0.1,4),(5,10)]
     masses_write = masses.tolist() if type(masses) == torch.Tensor else masses
+    k = 10.0
+    dt = 0.1
+    pin_amplitude = 1.0
+    min_seq_length = 10
+    max_seq_length = 50
 
     # model parameters
     model_cfg = dict(
         block_size=1024, # maximum sequence length?
         input_dim=1, # default to 1d time-series data
         context_dim=3, # dimension of context vector (initial conditions)
-        n_layer=10,
-        n_head=4,
-        n_embd=64, # embedding dimensions
+        n_layer=4,
+        n_head=1,
+        n_embd=8, # embedding dimensions
         dropout=0.0,
-        bias=False
+        bias=False,
+        use_pe=False
     )
 
     # train/val info
-    num_train = 1_000_000
-    num_val = 10_000
-    min_seq_length = 10
-    max_seq_length = 200
-    dt = 0.1
+    num_train = 20_000
+    num_val = 5_000
     bs = 512
-    num_epoch = 10
+    num_epoch = 2000
     max_iters = num_epoch*(num_train/bs)
 
     # optimizer
@@ -72,6 +83,8 @@ def main():
     training_cfg = dict(
         model_name=model_name,
         masses=masses_write,
+        k=k,
+        pin_amplitude=pin_amplitude,
         num_train=num_train,
         num_val=num_val,
         min_seq_length=min_seq_length,
@@ -87,7 +100,8 @@ def main():
         grad_clip=grad_clip,
         warmup_iters=warmup_iters,
         lr_decay_iters=lr_decay_iters,
-        min_lr=min_lr
+        min_lr=min_lr,
+        decay_lr=decay_lr
     )
 
     # save configs for future use
@@ -103,12 +117,12 @@ def main():
     # compile model
     #model = torch.compile(model)
 
-    #sho_data = RandomSHODataset(masses,num_train,100,10.0)
-    #val_data = RandomSHODataset(masses,num_val,100,10.0)
+    sho_data = SHODataset(num_trajectories=num_train,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude)
+    val_data = SHODataset(num_trajectories=num_val,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude)
     #sho_data = RandomSHODatasetVariableLength(masses,num_train,min_seq_length,max_seq_length,dt)
     #val_data = RandomSHODatasetVariableLength(masses,num_val,min_seq_length,max_seq_length,dt)
-    sho_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_train,min_seq_length,max_seq_length,dt)
-    val_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_val,min_seq_length,max_seq_length,dt)
+    #sho_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_train,min_seq_length,max_seq_length,dt)
+    #val_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_val,min_seq_length,max_seq_length,dt)
     loader = DataLoader(sho_data,batch_size=bs,shuffle=True)
     val_loader = DataLoader(val_data,batch_size=bs,shuffle=True)
 
@@ -144,11 +158,14 @@ def main():
             local_best_state = None
             for batch in loader:
                 optimizer.zero_grad()
-                lr = get_lr(iter_count)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
+                if decay_lr:
+                    lr = get_lr(iter_count)
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
 
                 input, target, context, mask = batch
+                if torch.all(mask == -999):
+                    mask = None
                 if mask is not None:
                     inpt_mask, tgt_mask = mask[:,:-1].to(device), mask[:,1:].float().to(device).unsqueeze(-1)
                 else:
@@ -182,6 +199,8 @@ def main():
             with torch.no_grad():
                 for batch in val_loader:
                     input, target, context, mask = batch
+                    if torch.all(mask == -999):
+                        mask = None
                     if mask is not None:
                         inpt_mask, tgt_mask = mask[:,:-1].to(device), mask[:,1:].float().to(device).unsqueeze(-1)
                     else:

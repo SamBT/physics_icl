@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 import numpy as np
 
 class SHODataset(Dataset):
-    def __init__(self, masses, seq_len, dt, k=1.0):
+    def __init__(self, masses, seq_len, dt, k=1.0, x0=None, v0=None):
         self.num_trajectories = len(masses)
         self.seq_len = seq_len
         self.masses = masses
@@ -13,8 +13,21 @@ class SHODataset(Dataset):
         self.dt = dt
         
         self.omegas = torch.sqrt(self.k/self.masses)
-        self.rand_x0 = torch.rand(self.num_trajectories)*2 - 1
-        self.rand_v0 = torch.sqrt((1.0 - self.rand_x0**2)*self.omegas**2)
+        if x0 is None and v0 is None:
+            self.rand_x0 = torch.rand(self.num_trajectories)*2 - 1
+            self.rand_v0 = torch.sqrt((1.0 - self.rand_x0**2)*self.omegas**2)
+        elif x0 is not None and v0 is None:
+            if type(x0) == float or type(x0) == int:
+                self.rand_x0 = x0*torch.ones(len(masses))
+            else:
+                self.rand_x0 = x0
+            self.rand_v0 = torch.sqrt((1.0 - self.rand_x0**2)*self.omegas**2)
+        elif x0 is None and v0 is not None:
+            if type(v0) == float or type(v0) == int:
+                self.rand_v0 = v0*torch.ones(len(masses))
+            else:
+                self.rand_v0 = v0
+            self.rand_x0 = torch.sqrt(1-(self.v0/self.omegas)**2)
         self.time_series, self.time = generate_harmonic_data(self.masses,
                                            self.rand_x0,
                                            self.rand_v0,
@@ -23,7 +36,7 @@ class SHODataset(Dataset):
                                            k=self.k)
         self.time_series = self.time_series.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
         self.context = torch.cat([self.masses.unsqueeze(1),self.rand_x0.unsqueeze(1),self.rand_v0.unsqueeze(1)],dim=1)
-        self.mask = None
+        self.mask = -999
 
     def __getitem__(self, idx):
         # Input sequence and next step
@@ -39,12 +52,15 @@ class SHODataset(Dataset):
 class RandomSHODataset(Dataset):
     def __init__(self, masses, num_trajectories, seq_len, dt, k=1.0):
         self.num_trajectories = num_trajectories
-        self.seq_len = seq_len
+        self.seq_len = seq_len            
         self.masses = masses
         self.k = k
         self.dt = dt
         
-        self.rand_masses = self.masses[torch.randint(0,len(masses),(num_trajectories,))]
+        if type(self.masses[0]) == tuple:
+            self.rand_masses = random_intervals(self.masses,self.num_trajectories)
+        else:
+            self.rand_masses = self.masses[torch.randint(0,len(masses),(num_trajectories,))]
         self.omegas = torch.sqrt(self.k/self.rand_masses)
         self.rand_x0 = torch.rand(num_trajectories)*2 - 1
         self.rand_v0 = torch.sqrt((1.0 - self.rand_x0**2)*self.omegas**2)
@@ -56,7 +72,7 @@ class RandomSHODataset(Dataset):
                                            k=self.k)
         self.time_series = self.time_series.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
         self.context = torch.cat([self.rand_masses.unsqueeze(1),self.rand_x0.unsqueeze(1),self.rand_v0.unsqueeze(1)],dim=1)
-        self.mask = None
+        self.mask = -999
 
     def __getitem__(self, idx):
         # Input sequence and next step
@@ -146,6 +162,39 @@ class RandomSHODatasetVariableLengthSmoothMass(Dataset):
     
     def __len__(self):
         return len(self.time_series)
+
+class FullRandomSHODataset(Dataset):
+    def __init__(self, num_trajectories, seq_len, dt, k=1.0):
+        self.num_trajectories = num_trajectories
+        self.seq_len = seq_len
+        self.masses = masses
+        self.k = k
+        self.dt = dt
+        
+        self.rand_masses = self.masses[torch.randint(0,len(masses),(num_trajectories,))]
+        self.omegas = torch.sqrt(self.k/self.rand_masses)
+        self.rand_x0 = torch.rand(num_trajectories)*2 - 1
+        self.rand_v0 = torch.sqrt((1.0 - self.rand_x0**2)*self.omegas**2)
+        self.time_series, self.time = generate_harmonic_data(self.rand_masses,
+                                           self.rand_x0,
+                                           self.rand_v0,
+                                           self.dt,
+                                           self.seq_len,
+                                           k=self.k)
+        self.time_series = self.time_series.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
+        self.context = torch.cat([self.rand_masses.unsqueeze(1),self.rand_x0.unsqueeze(1),self.rand_v0.unsqueeze(1)],dim=1)
+        self.mask = None
+
+    def __getitem__(self, idx):
+        # Input sequence and next step
+        input = self.time_series[idx,:-1]
+        target = self.time_series[idx,1:]
+        context = self.context[idx]
+        mask = self.mask
+        return input, target, context, mask
+    
+    def __len__(self):
+        return len(self.time_series)
     
 def random_intervals(intervals,num_samples):
     output = []
@@ -170,20 +219,11 @@ def generate_harmonic_data(m, x0, v0, dt, num_samples, k=1.0):
     omega = torch.sqrt(k/m)
     c1 = x0
     c2 = v0/omega
-    A = torch.sqrt(c1**2 + c2**2)
-    phi = torch.arctan2(c2,c1)
-    
-    # reshape
-    A = A.unsqueeze(1)
+    # reshape & make time series
+    c1 = c1.unsqueeze(1)
+    c2 = c2.unsqueeze(1)
     omega = omega.unsqueeze(1)
-    phi = phi.unsqueeze(1)
     time = torch.arange(0,num_samples*dt,dt)
-    #time = torch.linspace(0, tmax, num_samples).repeat(bs).reshape(bs,-1)
-    position = A * torch.cos(omega * time - phi)
-    velocity = -A * omega * torch.sin(omega * time)
-    return position, time
-
-# Example data generation
-#data = generate_harmonic_data(10000)
-#dataset = TrajectoryDataset(data, seq_len=50)
-#dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    position = c1 * torch.cos(omega*time) + c2 * torch.sin(omega*time)
+    velocity = -omega*c1*torch.sin(omega*time) + omega*c2*torch.cos(omega*time)
+    return position, velocity, time
