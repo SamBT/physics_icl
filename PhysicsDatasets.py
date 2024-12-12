@@ -6,7 +6,7 @@ import sys
 from collections.abc import Iterable
 
 class SHODataset(Dataset):
-    def __init__(self, dt=0.1, seq_len=50, num_trajectories=None, masses=None, x0=None, v0=None, k=10.0, pin_amplitude=None, min_amplitude=0.1):
+    def __init__(self, dt=0.1, seq_len=50, num_trajectories=None, masses=None, x0=None, v0=None, k=10.0, pin_amplitude=None, min_amplitude=0.1, k_context=False):
         if num_trajectories is not None:
             self.num_trajectories = num_trajectories
         else:
@@ -22,16 +22,24 @@ class SHODataset(Dataset):
         self.k = k
         self.seq_len = seq_len
         self.tmax = self.dt * self.seq_len
+        self.k_context = k_context
         
         # generating random parameters
         mmin, mmax = 0.1, 10
         xmin, xmax = -1, 1
         vmin, vmax = -1, 1
+        kmin, kmax = 5, 15
         rand_masses = torch.rand(self.num_trajectories)*(mmax-mmin) + mmin
         rand_x0 = torch.rand(self.num_trajectories)*(xmax-xmin) + xmin
         rand_v0 = torch.rand(self.num_trajectories)*(vmax-vmin) + vmin
+        rand_k = torch.rand(self.num_trajectories)*(kmax-kmin) + kmin
 
         # setting parameters based on inputs
+        # random k if desired
+        if self.k is None:
+            self.k = rand_k
+        else:
+            self.k = self.k * torch.ones(self.num_trajectories)
         # masses
         if masses is not None:
             if isinstance(masses,Iterable):
@@ -63,10 +71,6 @@ class SHODataset(Dataset):
         self.omegas = torch.sqrt(self.k/self.masses)
         if pin_amplitude is not None:
             assert pin_amplitude >= min_amplitude
-            """if v0 is not None:
-                sign = torch.sign(self.v0)
-            else:
-                sign = torch.randint(0,2,(len(self.v0),))*2 - 1"""
             sign = torch.sign(self.v0)
             self.v0 = sign * torch.sqrt(self.omegas**2*(pin_amplitude**2 - self.x0**2))
         self.A = torch.sqrt(self.x0**2 + (self.v0/self.omegas)**2)
@@ -84,9 +88,12 @@ class SHODataset(Dataset):
                                             self.seq_len,
                                             k=self.k)
         self.norm_masses = (self.masses-5)/5 # assume mass varies in the range (0,10)
+        self.norm_k = (self.k-10)/5 # assume k varies in the range (5,15)
         self.xt = self.xt.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
         self.vt = self.vt.unsqueeze(2)
         self.context = torch.cat([self.norm_masses.unsqueeze(1),self.x0.unsqueeze(1),self.v0.unsqueeze(1)],dim=1)
+        if self.k_context:
+            self.context = torch.cat([self.context,self.norm_k.unsqueeze(1)],dim=1)
         self.mask = -999
 
     def __getitem__(self, idx):
@@ -104,7 +111,10 @@ class SHODatasetXV(SHODataset):
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
         self.xv = torch.cat([self.xt,self.vt],dim=-1)
-        self.context = self.norm_masses.unsqueeze(1)
+        self.context = self.norm_masses.unsqueeze(1) # don't want (x0,v0) in context token
+        if self.k_context:
+            self.context = torch.cat([self.context,self.norm_k.unsqueeze(1)],dim=1)
+
 
     def __getitem__(self, idx):
         # Input sequence and next step

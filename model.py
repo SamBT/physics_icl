@@ -135,11 +135,17 @@ class GPT(nn.Module):
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
-            ctxe = nn.Linear(config.context_dim,config.n_embd)
+            #ctxe = nn.Linear(config.context_dim,config.n_embd)
         ))
         if config.use_pe:
             print("Using positional embedding")
             self.transformer["wpe"] = nn.Embedding(config.block_size, config.n_embd)
+        if config.context_dim is not None and config.context_dim> 0:
+            self.use_context = True
+            self.transformer['ctxe'] = nn.Linear(config.context_dim,config.n_embd)
+        else:
+            self.use_context = False
+
         self.lm_head = nn.Linear(config.n_embd, config.input_dim, bias=False)
         
         # with weight tying when using torch.compile() some warnings get generated:
@@ -178,7 +184,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, context, targets=None, mask=None):
+    def forward(self, idx, context=None, targets=None, mask=None):
         # idx has shape (b, t, n_embd), context has shape (b, n_ctx)
         device = idx.device
         b, t, n_inp = idx.size()
@@ -187,14 +193,15 @@ class GPT(nn.Module):
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        ctx_emb = self.transformer.ctxe(context).unsqueeze(1) # context embeddings of shape (b, 1, n_embd)
-        tok_emb = torch.cat([ctx_emb,tok_emb],dim=1) # full input of shape (b, t+1, n_embd)
+        if self.use_context:
+            ctx_emb = self.transformer.ctxe(context).unsqueeze(1) # context embeddings of shape (b, 1, n_embd)
+            tok_emb = torch.cat([ctx_emb,tok_emb],dim=1) # full input of shape (b, t+1, n_embd)
         if self. config.use_pe:
             pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
             x = self.transformer.drop(tok_emb + pos_emb)
         else:
             x = self.transformer.drop(tok_emb)
-        if mask is not None:
+        if mask is not None and self.use_context:
             # pad the mask to account for additional context token at the front
             extra = torch.ones((idx.shape[0],1),dtype=torch.bool).to(device)
             padded_mask = torch.cat((extra,mask),dim=1)
@@ -206,7 +213,7 @@ class GPT(nn.Module):
 
         # project outputs
         x = self.lm_head(x)
-        return x[:,1:,:] # don't return the extra token we added for the context vector
+        return x[:,1:,:] if self.use_context else x# don't return the extra token we added for the context vector
 
         """if targets is not None:
             # if we are given some desired targets also calculate the loss

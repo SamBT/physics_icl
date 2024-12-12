@@ -39,45 +39,49 @@ def main():
 
     # masses for SHO dataset
     #masses = torch.cat([torch.arange(0.1,4.1,0.1),torch.arange(5.0,10.1,0.1)],dim=0)
-    masses = [(0.1,4),(5,10)]
+    masses = [(1,4),(5,10)]
     masses_write = masses.tolist() if type(masses) == torch.Tensor else masses
-    k = 10.0
+    k = None
     dt = 0.1
     pin_amplitude = None
+    min_amplitude = 0.0
+    k_context = False
+    context_dim = 1
     min_seq_length = 10
-    max_seq_length = 65 # so that we range up to 2pi with dt = 0.1 and k=10 -- m = 10 corresponds to T = 2pi = 65*0.1
+    max_seq_length = 50 # so that we range up to 2pi with dt = 0.1 and k=10 -- m = 10 corresponds to T = 2pi = 65*0.1
 
     # model parameters
     model_cfg = dict(
         block_size=1024, # maximum sequence length?
         input_dim=2, # 2d (x,v) time-series data
-        context_dim=1, # dimension of context vector (initial conditions)
-        n_layer=4,
-        n_head=1,
-        n_embd=16, # embedding dimensions
+        context_dim=context_dim, # dimension of context vector (mass)
+        n_layer=8,
+        n_head=8,
+        n_embd=128, # embedding dimensions
         dropout=0.0,
         bias=False,
         use_pe=False
     )
 
     # train/val info
-    num_train = 20_000
-    num_val = 5_000
+    num_train = 50_000
+    num_val = 10_000
     bs = 128
-    num_epoch = 1000
+    bs_val = 1024
+    num_epoch = 100
     max_iters = num_epoch*(num_train/bs)
 
     # optimizer
     learning_rate = 5e-4
-    weight_decay = 0.1
+    weight_decay = 0.01
     beta1 = 0.9
-    beta2 = 0.95
+    beta2 = 0.999
     grad_clip = 1.0
 
     # learning rate schedule
     decay_lr = True # whether to decay the learning rate
-    warmup_iters = 0.01*max_iters # how many steps to warm up for
-    lr_decay_iters = 0.9*max_iters # should be ~= max_iters per Chinchilla
+    warmup_iters = 0.05*max_iters # how many steps to warm up for
+    lr_decay_iters = max_iters # should be ~= max_iters per Chinchilla
     min_lr = 1e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 
     training_cfg = dict(
@@ -85,12 +89,15 @@ def main():
         masses=masses_write,
         k=k,
         pin_amplitude=pin_amplitude,
+        min_amplitude=min_amplitude,
+        k_context=k_context,
         num_train=num_train,
         num_val=num_val,
         min_seq_length=min_seq_length,
         max_seq_length=max_seq_length,
         dt=dt,
         bs=bs,
+        bs_val=bs_val,
         num_epoch=num_epoch,
         max_iters=max_iters,
         learning_rate=learning_rate,
@@ -117,14 +124,14 @@ def main():
     # compile model
     #model = torch.compile(model)
 
-    sho_data = SHODatasetXV(num_trajectories=num_train,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude)
-    val_data = SHODatasetXV(num_trajectories=num_val,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude)
+    sho_data = SHODatasetXV(num_trajectories=num_train,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude,min_amplitude=min_amplitude,k_context=k_context)
+    val_data = SHODatasetXV(num_trajectories=num_val,seq_len=max_seq_length,masses=masses,dt=dt,k=k,pin_amplitude=pin_amplitude,min_amplitude=min_amplitude,k_context=k_context)
     #sho_data = RandomSHODatasetVariableLength(masses,num_train,min_seq_length,max_seq_length,dt)
     #val_data = RandomSHODatasetVariableLength(masses,num_val,min_seq_length,max_seq_length,dt)
     #sho_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_train,min_seq_length,max_seq_length,dt)
     #val_data = RandomSHODatasetVariableLengthSmoothMass(masses,num_val,min_seq_length,max_seq_length,dt)
     loader = DataLoader(sho_data,batch_size=bs,shuffle=True)
-    val_loader = DataLoader(val_data,batch_size=bs,shuffle=True)
+    val_loader = DataLoader(val_data,batch_size=bs_val,shuffle=True)
 
     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
 
