@@ -82,11 +82,11 @@ class SHODataset(Dataset):
         
         # make time series data
         self.xt, self.vt, self.time = pdata.generate_harmonic_data(self.masses,
+                                            self.k,
                                             self.x0,
                                             self.v0,
                                             self.dt,
-                                            self.seq_len,
-                                            k=self.k)
+                                            self.seq_len)
         self.norm_masses = (self.masses-5)/5 # assume mass varies in the range (0,10)
         self.norm_k = (self.k-10)/5 # assume k varies in the range (5,15)
         self.xt = self.xt.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
@@ -123,4 +123,157 @@ class SHODatasetXV(SHODataset):
         target = self.xv[idx,1:]
         context = self.context[idx]
         mask = self.mask
+        return input, target, context, mask
+    
+class DampedSHODataset(Dataset):
+    def __init__(self, dt=0.1, seq_len=50, min_seq_length=20, num_trajectories=None, masses=None, x0=None, v0=None, k=None, beta=None, pin_amplitude=None, min_amplitude=None, k_context=False, vary_length=False):
+        if num_trajectories is not None:
+            self.num_trajectories = num_trajectories
+        else:
+            if masses is not None and isinstance(masses,Iterable):
+                if type(masses[0]) != tuple:
+                    self.num_trajectories = len(masses)
+            elif x0 is not None or v0 is not None:
+                self.num_trajectories = len(x0) if x0 is not None else len(v0)
+            else:
+                print("Error: got no compatible input to specify num_trajectories!")
+                sys.exit()
+        self.dt = dt
+        self.k = k
+        self.beta = beta
+        self.seq_len = seq_len
+        self.min_seq_length = min_seq_length
+        self.tmax = self.dt * self.seq_len
+        self.k_context = k_context
+        self.vary_length = vary_length
+        
+        # generating random parameters
+        mmin, mmax = 1, 10
+        xmin, xmax = -1, 1
+        vmin, vmax = -1, 1
+        kmin, kmax = 10, 20
+        betamin, betamax = 0, 3.7 # to make roughly half samples be overdamped, half underdamped when k and m are sampled as above
+        rand_masses = torch.rand(self.num_trajectories)*(mmax-mmin) + mmin
+        rand_x0 = torch.rand(self.num_trajectories)*(xmax-xmin) + xmin
+        rand_v0 = torch.rand(self.num_trajectories)*(vmax-vmin) + vmin
+        rand_k = torch.rand(self.num_trajectories)*(kmax-kmin) + kmin
+        rand_beta = torch.rand(self.num_trajectories)*(betamax-betamin) + betamin
+
+        # setting parameters based on inputs
+        # random k if desired
+        if self.k is None:
+            self.k = rand_k
+        else:
+            self.k = self.k * torch.ones(self.num_trajectories)
+        # random damping if desired
+        if self.beta is None:
+            self.beta = rand_beta
+        else:
+            self.beta = self.beta * torch.ones(self.num_trajectories)
+        # masses
+        if masses is not None:
+            if isinstance(masses,Iterable):
+                if type(masses[0]) == tuple:
+                    self.masses = pdata.random_intervals(masses,self.num_trajectories)
+                else:
+                    self.masses = masses
+            else:
+                self.masses = masses*torch.ones(self.num_trajectories)
+        else:
+            self.masses = rand_masses
+        # initial positions
+        if x0 is None:
+            self.x0 = rand_x0
+        else:
+            if type(x0) != torch.Tensor:
+                self.x0 = x0*torch.ones(self.num_trajectories)
+            else:
+                self.x0 = x0
+        # initial velocities
+        if v0 is None:
+            self.v0 = rand_v0
+        else:
+            if type(v0) != torch.Tensor:
+                self.v0 = v0*torch.ones(self.num_trajectories)
+            else:
+                self.v0 = v0
+        # compute frequency & change v0 to fix amplitude if requested
+        self.omegas = torch.sqrt(self.k/self.masses)
+        if pin_amplitude is not None:
+            if min_amplitude is not None:
+                assert pin_amplitude >= min_amplitude
+            sign = torch.sign(self.v0)
+            self.v0 = sign * torch.sqrt(self.omegas**2*(pin_amplitude**2 - self.x0**2))
+        self.A = torch.sqrt(self.x0**2 + (self.v0/self.omegas)**2)
+        if min_amplitude is not None:
+            if torch.any(self.A < min_amplitude):
+                self.A = torch.clamp(self.A,min=min_amplitude)
+                self.v0 = torch.sign(self.v0)*torch.sqrt(self.omegas**2*(self.A**2 - self.x0**2))
+
+        assert len(self.masses) == len(self.x0) == len(self.v0)
+        
+        # make time series data
+        self.xt, self.vt, self.time = pdata.generate_damped_harmonic_data(self.masses,
+                                            self.k,
+                                            self.beta,
+                                            self.x0,
+                                            self.v0,
+                                            self.dt,
+                                            self.seq_len)
+        # record the damping status of each time series
+        self.mask_status = self.compute_damping_status()
+        self.norm_masses = (self.masses-5)/5 # assume mass varies in the range (0,10)
+        self.norm_k = (self.k-10)/5 # assume k varies in the range (5,15)
+        self.xt = self.xt.unsqueeze(2) # make it have shape (num_trajectories, seq_len, 1)
+        self.vt = self.vt.unsqueeze(2)
+        self.context = torch.cat([self.norm_masses.unsqueeze(1),self.x0.unsqueeze(1),self.v0.unsqueeze(1)],dim=1)
+        if self.k_context:
+            self.context = torch.cat([self.context,self.norm_k.unsqueeze(1)],dim=1)
+
+        # set what data we want to use as inputs
+        self.inputs = self.xt
+        
+        # create mask if we want variable-length sequences (e.g. training)
+        if self.vary_length:
+            lengths = torch.randint(self.min_seq_length,self.seq_len+1,(self.num_trajectories,)).reshape(-1,1)
+            self.mask = torch.arange(self.seq_len).reshape(1,-1).tile(self.num_trajectories,1)
+            self.mask = (self.mask < lengths).float().unsqueeze(-1)
+        else:
+            self.mask = -999*torch.ones(self.num_trajectories)
+
+    def __getitem__(self, idx):
+        # Input sequence and next step
+        input = self.inputs[idx,:-1]
+        target = self.inputs[idx,1:]
+        context = self.context[idx]
+        mask = self.mask[idx]
+        return input, target, context, mask
+    
+    def __len__(self):
+        return len(self.xt)
+    
+    def compute_damping_status(self):
+        w0 = torch.sqrt(self.k/self.masses)
+        mask_undamp = 1*(self.beta==0).float()
+        mask_underdamp = 2*((self.beta<w0)&(self.beta>0)).float()
+        mask_critdamp = 3*(self.beta==w0).float()
+        mask_overdamp = 4*(self.beta>w0).float()
+        return mask_undamp+mask_underdamp+mask_critdamp+mask_overdamp
+    
+class DampedSHODatasetXV(DampedSHODataset):
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs)
+        self.xv = torch.cat([self.xt,self.vt],dim=-1)
+        self.inputs = self.xv
+        self.context = self.norm_masses.unsqueeze(1) # don't want (x0,v0) in context token
+        if self.k_context:
+            self.context = torch.cat([self.context,self.norm_k.unsqueeze(1)],dim=1)
+
+
+    def __getitem__(self, idx):
+        # Input sequence and next step
+        input = self.inputs[idx,:-1]
+        target = self.inputs[idx,1:]
+        context = self.context[idx]
+        mask = self.mask[idx]
         return input, target, context, mask

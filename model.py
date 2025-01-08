@@ -10,6 +10,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 from dataclasses import dataclass
+import sys
 
 import torch
 import torch.nn as nn
@@ -38,9 +39,12 @@ class CausalSelfAttention(nn.Module):
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
+        self.dropout = config.dropout
+        # parameters related to number of heads, block size, etc
         self.n_head = config.n_head
         self.n_embd = config.n_embd
-        self.dropout = config.dropout
+        self.n_embd_head = config.n_embd // config.n_head
+        self.block_size = config.block_size
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -48,24 +52,86 @@ class CausalSelfAttention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
+        # rotary positional encoding if using
+        self.use_rope = config.use_rope
+        if self.use_rope:
+            self.create_rope_cache()
+    
+    def create_rope_cache(self,base=10_000):
+        dim=self.n_embd_head
+        theta = torch.exp(torch.arange(0, dim, 2).float() * (-math.log(base)/ dim))
+        self.register_buffer("theta", theta, persistent=False)
+        seq_idx = torch.arange(self.block_size, dtype=self.theta.dtype, device=self.theta.device)
+        idx_theta = torch.einsum("i, j -> ij", seq_idx, self.theta).float()
+        rope_cache = torch.stack([torch.cos(idx_theta), torch.sin(idx_theta)], dim=-1)
+        self.register_buffer("rope_cache", rope_cache, persistent=False)
+
+    def apply_rope(self,x,input_pos=None):
+        seq_len = x.size(1)
+        # extract the values based on whether input_pos is set or not
+        rope_cache_ = self.rope_cache[:seq_len] if input_pos is None else self.cache[input_pos]
+        # reshape input; the last dimension is used for computing the output.
+        # Cast to float to match the reference implementation
+        # tensor has shape [b, s, n_h, h_d // 2, 2]
+        xshaped = x.float().reshape(*x.shape[:-1], -1, 2)
+
+        # reshape the cache for broadcasting
+        # tensor has shape [b, s, 1, h_d // 2, 2] if packed samples,
+        # otherwise has shape [1, s, 1, h_d // 2, 2]
+        rope_cache_ = rope_cache_.view(-1, xshaped.size(1), 1, xshaped.size(3), 2)
+
+        # tensor has shape [b, s, n_h, h_d // 2, 2]
+        x_out = torch.stack(
+            [
+                xshaped[..., 0] * rope_cache_[..., 0]
+                - xshaped[..., 1] * rope_cache_[..., 1],
+                xshaped[..., 1] * rope_cache_[..., 0]
+                + xshaped[..., 0] * rope_cache_[..., 1],
+            ],
+            -1,
+        )
+        # tensor has shape [b, s, n_h, h_d]
+        x_out = x_out.flatten(3)
+        return x_out.type_as(x)
 
     def forward(self, x, mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        if self.use_rope:
+            kT = k.view(B, T, self.n_head, self.n_embd_head)
+            qT = q.view(B, T, self.n_head, self.n_embd_head)
+            kT = self.apply_rope(kT)
+            qT = self.apply_rope(qT)
+            k = kT.transpose(1, 2)
+            q = qT.transpose(1, 2)
+            v = v.view(B, T, self.n_head, self.n_embd_head).transpose(1, 2)
+        else:
+            k = k.view(B, T, self.n_head, self.n_embd_head).transpose(1, 2) # (B, nh, T, hs)
+            q = q.view(B, T, self.n_head, self.n_embd_head).transpose(1, 2) # (B, nh, T, hs)
+            v = v.view(B, T, self.n_head, self.n_embd_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
+            #if mask is not None:
+            #    expanded_mask = mask[:,None,None,:]
+            #    y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=expanded_mask, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            #else:
+            #    y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
             if mask is not None:
-                expanded_mask = mask[:,None,None,:]
-                y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=expanded_mask, dropout_p=self.dropout if self.training else 0, is_causal=True)
+                attn_mask = torch.zeros(B,T,T,dtype=q.dtype).to(q)
+                causal_mask = torch.ones(T,T).tril(diagonal=0).unsqueeze(0).to(q)
+                full_mask = (mask.transpose(1,2) * causal_mask).bool() # (1,T,T) * (B,1,T) -> (B,T,T)
+                attn_mask = attn_mask.masked_fill(full_mask.logical_not(),float("-inf"))[:,None,:,:] # add additional axis to broadcast to nhead
+                #print(mask.shape)
+                #print(attn_mask.shape)
+                #print(q.shape,k.shape,v.shape)
+                y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=self.dropout if self.training else 0)
             else:
                 y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+                
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
@@ -119,7 +185,8 @@ class GPTConfig:
     n_embd: int = 64 # embedding dimensions
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    use_pe: bool = True # True = use positional encoding
+    use_pe: bool = False # True = use positional encoding
+    use_rope: bool = True # True = use rotary positional embedding (RoPE)
 
 class GPT(nn.Module):
 
@@ -137,9 +204,18 @@ class GPT(nn.Module):
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
             #ctxe = nn.Linear(config.context_dim,config.n_embd)
         ))
+
+        # configure positional embedding if desired
+        if config.use_rope and config.use_pe:
+            print("Error - shouldn't use RoPE and vanilla PE at the same time!")
+            sys.exit()
         if config.use_pe:
-            print("Using positional embedding")
+            print("Using vanilla positional embedding")
             self.transformer["wpe"] = nn.Embedding(config.block_size, config.n_embd)
+        if config.use_rope:
+            print("Using RoPE")
+
+        # configure to take context if desired
         if config.context_dim is not None and config.context_dim> 0:
             self.use_context = True
             self.transformer['ctxe'] = nn.Linear(config.context_dim,config.n_embd)
@@ -196,17 +272,22 @@ class GPT(nn.Module):
         if self.use_context:
             ctx_emb = self.transformer.ctxe(context).unsqueeze(1) # context embeddings of shape (b, 1, n_embd)
             tok_emb = torch.cat([ctx_emb,tok_emb],dim=1) # full input of shape (b, t+1, n_embd)
+        
+        # add vanilla positional embedding if using (if using RoPE, done at the level of the self-attention blocks)
         if self. config.use_pe:
             pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
             x = self.transformer.drop(tok_emb + pos_emb)
         else:
             x = self.transformer.drop(tok_emb)
+        
+        # prepare mask if using
         if mask is not None and self.use_context:
             # pad the mask to account for additional context token at the front
             extra = torch.ones((idx.shape[0],1),dtype=torch.bool).to(device)
             padded_mask = torch.cat((extra,mask),dim=1)
         else:
-            padded_mask = None
+            padded_mask = mask
+        
         for block in self.transformer.h:
             x = block(x,mask=padded_mask)
         x = self.transformer.ln_f(x)
