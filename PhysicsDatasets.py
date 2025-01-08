@@ -1,9 +1,11 @@
 import physics_data as pdata
 import torch
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 import sys
 from collections.abc import Iterable
+import physics_data_v2 as pdata2
+import utils
 
 class SHODataset(Dataset):
     def __init__(self, dt=0.1, seq_len=50, num_trajectories=None, masses=None, x0=None, v0=None, k=10.0, pin_amplitude=None, min_amplitude=0.1, k_context=False):
@@ -44,7 +46,7 @@ class SHODataset(Dataset):
         if masses is not None:
             if isinstance(masses,Iterable):
                 if type(masses[0]) == tuple:
-                    self.masses = pdata.random_intervals(masses,self.num_trajectories)
+                    self.masses = utils.random_intervals(masses,self.num_trajectories)
                 else:
                     self.masses = masses
             else:
@@ -174,7 +176,7 @@ class DampedSHODataset(Dataset):
         if masses is not None:
             if isinstance(masses,Iterable):
                 if type(masses[0]) == tuple:
-                    self.masses = pdata.random_intervals(masses,self.num_trajectories)
+                    self.masses = utils.random_intervals(masses,self.num_trajectories)
                 else:
                     self.masses = masses
             else:
@@ -277,3 +279,109 @@ class DampedSHODatasetXV(DampedSHODataset):
         context = self.context[idx]
         mask = self.mask[idx]
         return input, target, context, mask
+
+
+class DampedSHODatasetV2(IterableDataset):
+    def __init__(self, k=(10,20), m=(1,10), x0=(-1,1), v0=(-1,1), beta=(0,3.7), dt=0.1, 
+                       seq_len=50, min_seq_length=20, pin_amplitude=None, min_amplitude=None, 
+                       k_context=False, vary_length=False):
+        # physical parameters
+        self.k = k
+        self.m = m
+        self.x0 = x0
+        self.v0 = v0
+        self.beta = beta
+        self.dt = dt 
+
+        # other parameters
+        self.seq_len = seq_len
+        self.min_seq_length = min_seq_length
+        self.pin_amplitude = pin_amplitude
+        self.min_amplitude = min_amplitude
+        self.tmax = self.dt * self.seq_len
+        self.k_context = k_context
+        self.vary_length = vary_length
+
+    def get_params(self):
+        # spring constant
+        k = self.sample_param(self.k)
+        m = self.sample_param(self.m)
+        beta = self.sample_param(self.beta)
+        x0 = self.sample_param(self.x0)
+        v0 = self.sample_param(self.v0)
+        return k,m,beta,x0,v0
+
+    def sample_param(self,p):
+        if type(p) == tuple:
+            assert len(p) == 2
+            return p[0] + np.random.rand()*(p[1]-p[0])
+        elif type(p) == float:
+            return p
+        elif isinstance(p,Iterable):
+            if type(p[0]) == tuple:
+                assert np.all([len(pi) == 2 and type(pi) == tuple for pi in p])
+                return utils.random_multiInterval(p)
+            else:
+                return np.random.choice(p)
+        else:
+            print(f"Can't sample parameter in given format: {p}")
+            sys.exit()
+
+    def generate_data(self):
+        k,m,beta,x0,v0 = self.get_params()
+
+        # compute frequency & change v0 to fix amplitude if requested
+        w = np.sqrt(k/m)
+        if self.pin_amplitude is not None:
+            if self.min_amplitude is not None:
+                assert self.pin_amplitude >= self.min_amplitude
+            sign = np.sign(v0)
+            v0 = sign * np.sqrt(w**2*(self.pin_amplitude**2 - x0**2))
+        A = np.sqrt(x0**2 + (v0/w)**2)
+        if self.min_amplitude is not None:
+            if A < self.min_amplitude:
+                A = min_amplitude
+                v0 = np.sign(v0)*np.sqrt(w**2*(A**2 - x0**2))
+        
+        # make time series data
+        xt, vt, time = pdata2.generate_damped_harmonic_data(m,k,beta,x0,v0,self.dt,self.seq_len)
+
+        # compute mask to restrict length if desired
+        if self.vary_length:
+            length = np.random.randint(self.min_seq_length,self.seq_len+1)
+            mask = (np.arange(self.seq_len) < length).astype(float).unsqueeze()
+        else:
+            mask = -999 * np.ones(self.seq_len)
+
+        # create context vector (legacy, not used)
+        context = np.array([m,x0,v0])
+
+        return xt, vt, time, mask, context
+
+    def get_series(self):
+        xt, vt, time, mask, context = self.generate_data()
+        xvt = np.concatenate([xt.reshape(-1,1),vt.reshape(-1,1)],axis=1)
+        inpt = xvt[:-1,:]
+        target = xvt[1:,:]
+        return inpt, target, context, mask
+
+
+    def __iter__(self):
+        while True:
+            inpt, target, context, mask = self.get_series()
+            yield torch.tensor(inpt), torch.tensor(target), torch.tensor(context), torch.tensor(mask).unsqueeze(-1)
+    
+    
+    def compute_damping_status(self,k,m,beta):
+        w0 = np.sqrt(k/m)
+        if beta == 0:
+            return 1
+        elif beta > 0 and beta < w0:
+            return 2
+        elif beta == w0:
+            return 3
+        elif beta > w0:
+            return 4
+        else:
+            print(f"Something is wrong, beta = {beta} and w0 = {w0}")
+            sys.exit()

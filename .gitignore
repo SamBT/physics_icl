@@ -1,8 +1,6 @@
-slurm_logs/
 trainings/**/*best_epoch_*.pt
 __pycache__
 **/.ipynb_checkpoints/
 nanoGPT
-logs/
 **/*.png
 **/*.pdf

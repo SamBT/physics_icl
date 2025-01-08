@@ -123,7 +123,7 @@ class CausalSelfAttention(nn.Module):
             if mask is not None:
                 attn_mask = torch.zeros(B,T,T,dtype=q.dtype).to(q)
                 causal_mask = torch.ones(T,T).tril(diagonal=0).unsqueeze(0).to(q)
-                full_mask = (mask.transpose(1,2) * causal_mask).bool() # (1,T,T) * (B,1,T) -> (B,T,T)
+                full_mask = (mask.transpose(1,2) * causal_mask).bool() # (B,1,T) * (1,T,T) -> (B,T,T)
                 attn_mask = attn_mask.masked_fill(full_mask.logical_not(),float("-inf"))[:,None,:,:] # add additional axis to broadcast to nhead
                 #print(mask.shape)
                 #print(attn_mask.shape)

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from model import GPT, GPTConfig
 import json
+import numpy as np
 
 def load_model(name,date,epoch=None):
     src = f"trainings/{name}_{date}/"
@@ -37,3 +38,24 @@ def load_model(name,date,epoch=None):
     )
 
     return model, kwargs
+
+def random_intervals(intervals,num_samples):
+    output = []
+    num_per = num_samples//len(intervals)
+    rem = num_samples % len(intervals)
+    nums = [num_per]*len(intervals)
+    for i in range(rem):
+        nums[i] += 1
+    for i,r in enumerate(intervals):
+        assert r[1] > r[0]
+        rint = np.rand(nums[i])
+        rint = rint * (r[1]-r[0]) + r[0]
+        output.append(rint)
+    output = np.cat(output,dim=0)
+    output = output[np.randperm(output.shape[0])]
+    return output
+
+def random_multiInterval(intervals):
+    i = intervals[np.random.choice(len(intervals))]
+    assert type(i) == tuple and len(i) == 2
+    return i[0] + np.random.rand()*(i[1] - i[0])

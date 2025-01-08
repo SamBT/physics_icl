@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset
 import numpy as np
+from collections.abc import Iterable
 
 # Generate synthetic data: simple harmonic motion
 def generate_harmonic_data(m, k, x0, v0, dt, num_samples):
@@ -20,7 +21,7 @@ def generate_harmonic_data(m, k, x0, v0, dt, num_samples):
     return position, velocity, time
 
 def generate_damped_harmonic_data(m, k, beta, x0, v0, dt, num_samples):
-    assert m.shape[0] == x0.shape[0] == v0.shape[0]
+    #assert m.shape[0] == x0.shape[0] == v0.shape[0]
     w0 = torch.sqrt(k/m)
     w1 = torch.sqrt(np.abs(w0**2 - beta**2))
     
@@ -93,20 +94,3 @@ def sol_overdamped(x0,v0,w1,beta,num_samples,dt):
     position = torch.nan_to_num(position,nan=0.0)
     velocity = torch.nan_to_num(velocity,nan=0.0)
     return position, velocity, time
-
-
-def random_intervals(intervals,num_samples):
-    output = []
-    num_per = num_samples//len(intervals)
-    rem = num_samples % len(intervals)
-    nums = [num_per]*len(intervals)
-    for i in range(rem):
-        nums[i] += 1
-    for i,r in enumerate(intervals):
-        assert r[1] > r[0]
-        rint = torch.rand(nums[i])
-        rint = rint * (r[1]-r[0]) + r[0]
-        output.append(rint)
-    output = torch.cat(output,dim=0)
-    output = output[torch.randperm(output.shape[0])]
-    return output

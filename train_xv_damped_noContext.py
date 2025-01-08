@@ -57,9 +57,9 @@ def main():
         block_size=1024, # maximum sequence length?
         input_dim=2, # 2d (x,v) time-series data
         context_dim=context_dim, # dimension of context vector (mass)
-        n_layer=4,
+        n_layer=6,
         n_head=8,
-        n_embd=64, # embedding dimensions
+        n_embd=256, # embedding dimensions
         dropout=0.0,
         bias=False,
         use_pe=False,
@@ -78,7 +78,7 @@ def main():
     learning_rate = 5e-4
     weight_decay = 0.01
     beta1 = 0.9
-    beta2 = 0.999
+    beta2 = 0.95
     grad_clip = 1.0
 
     # learning rate schedule
