@@ -12,8 +12,11 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
 import json
+import sys
+import utils
+import yaml
 
-def main():
+def main(config):
     has_cuda = torch.cuda.is_available()
     has_mps = torch.backends.mps.is_available()
     if has_cuda:
@@ -24,110 +27,51 @@ def main():
         device = 'cpu'
     device_type = device # for later use in torch.autocast
 
-    # high-level
+    # get the date/time for naming purposes
     now = datetime.now()
     formatted_date_time = now.strftime("%d%b%y_%H%M")
-    model_name = f"random_DampedSHO_xvInput_noContext_{formatted_date_time}"
+    model_name = f"random_DampedSHO_xvInput_noContext_v2_{formatted_date_time}"
 
-    outdir = f"trainings/{model_name}"
-    logdir = f"logs/{model_name}"
+    outdir = f"trainings/{config['model_name']}/{formatted_date_time}/"
+    logdir = f"logs/{config['model_name']}/{formatted_date_time}/"
 
-    # masses for SHO dataset
-    #masses = torch.cat([torch.arange(0.1,4.1,0.1),torch.arange(5.0,10.1,0.1)],dim=0)
-    masses = [(1,4),(5,10)]
-    masses_write = masses.tolist() if type(masses) == torch.Tensor else masses
-    k = None
-    beta = None
-    dt = 0.1
-    pin_amplitude = None
-    min_amplitude = 0.0
-    k_context = False
-    context_dim = None
-    min_seq_length = 10
-    max_seq_length = 50 # so that we range up to 2pi with dt = 0.1 and k=10 -- m = 10 corresponds to T = 2pi = 65*0.1
-    vary_length = True # whether or not to train with variable-length sequences
-
-    # model parameters
-    model_cfg = dict(
-        block_size=1024, # maximum sequence length?
-        input_dim=2, # 2d (x,v) time-series data
-        context_dim=context_dim, # dimension of context vector (mass)
-        n_layer=6,
-        n_head=8,
-        n_embd=256, # embedding dimensions
-        dropout=0.0,
-        bias=False,
-        use_pe=False,
-        use_rope=True
-    )
+    train_params = config['training_params']
+    dset_params = config['dataset_params']
+    model_params = config['model_params']
+    opt_params = config['opt_params']
 
     # train/val info
-    num_train_iters = 10_000
-    save_every = 1_000
-    val_every = 1_000
-    num_val = 10_000
-    bs = 128
-    bs_val = 1024
+    num_train_iters = train_params['num_train_iters']
+    save_every = train_params['save_every']
+    val_every = train_params['val_every']
+    num_val = train_params['num_val_seqs']
+    bs = train_params['bs']
+    bs_val = train_params['bs_val']
     num_val_iters = int(np.round(num_val/bs_val))
 
     # optimizer
-    learning_rate = 5e-4
-    weight_decay = 0.01
-    beta1 = 0.9
-    beta2 = 0.95
-    grad_clip = 1.0
+    learning_rate = opt_params['lr']
+    weight_decay = opt_params['weight_decay']
+    beta1 = opt_params['beta1']
+    beta2 = opt_params['beta2']
+    grad_clip = opt_params['grad_clip']
 
     # learning rate schedule
-    decay_lr = True # whether to decay the learning rate
-    warmup_iters = 0.05*num_train_iters # how many steps to warm up for
-    lr_decay_iters = num_train_iters # should be ~= max_iters per Chinchilla
-    min_lr = 1e-6 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-
-    training_cfg = dict(
-        model_name=model_name,
-        masses=masses_write,
-        k=k,
-        beta=beta,
-        pin_amplitude=pin_amplitude,
-        min_amplitude=min_amplitude,
-        k_context=k_context,
-        num_train_iters=num_train_iters,
-        save_every=save_every,
-        val_every=val_every,
-        num_val=num_val,
-        num_val_iters=num_val_iters,
-        min_seq_length=min_seq_length,
-        max_seq_length=max_seq_length,
-        vary_length=vary_length,
-        dt=dt,
-        bs=bs,
-        bs_val=bs_val,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        beta1=beta1,
-        beta2=beta2,
-        grad_clip=grad_clip,
-        warmup_iters=warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        min_lr=min_lr,
-        decay_lr=decay_lr
-    )
-
+    decay_lr = opt_params['decay_lr'] # whether to decay the learning rate
+    warmup_iters = opt_params['warmup_iter_frac']*num_train_iters # how many steps to warm up for
+    lr_decay_iters = opt_params['lr_decay_iter_frac']*num_train_iters # should be ~= max_iters per Chinchilla
+    min_lr = opt_params['min_lr'] # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 
     # define model
-    gpt_config = GPTConfig(**model_cfg)
+    gpt_config = GPTConfig(**model_params)
     model = GPT(gpt_config)
     model.to(device)
     
     # compile model
     #model = torch.compile(model)
 
-    sho_data = DampedSHODatasetV2(seq_len=max_seq_length,min_seq_length=min_seq_length,vary_length=vary_length,
-                                  masses=masses,dt=dt,k=k,beta=beta,pin_amplitude=pin_amplitude,
-                                  min_amplitude=min_amplitude,k_context=k_context)
-    val_data = DampedSHODatasetV2(seq_len=max_seq_length,min_seq_length=min_seq_length,vary_length=vary_length,
-                                  masses=masses,dt=dt,k=k,beta=beta,pin_amplitude=pin_amplitude,
-                                  min_amplitude=min_amplitude,k_context=k_context)
+    sho_data = DampedSHODatasetV2(**dset_params)
+    val_data = DampedSHODatasetV2(**dset_params)
     loader = iter(DataLoader(sho_data,batch_size=bs))
     val_loader = iter(DataLoader(val_data,batch_size=bs_val))
 
@@ -135,14 +79,12 @@ def main():
 
     # make directories and save configs for future use
     if not os.path.isdir(outdir):
-        os.mkdir(outdir)
+        os.makedirs(outdir)
     if not os.path.isdir(logdir):
-        os.mkdir(logdir)
+        os.makedirs(logdir)
 
-    with open(f"{outdir}/training_cfg.json","w") as fout:
-        json.dump(training_cfg,fout,indent=4)
-    with open(f"{outdir}/model_cfg.json","w") as fout:
-        json.dump(model_cfg,fout,indent=4)
+    with open(f"{outdir}/config.yaml","w") as fout:
+        yaml.dump(config,fout)
 
     def get_lr(it):
         # 1) linear warmup for warmup_iters steps
@@ -157,18 +99,15 @@ def main():
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
         return min_lr + coeff * (learning_rate - min_lr)
 
-    best_state = None
     best_val_loss = 1e9
     best_train_loss = 1e9
     best_avg_loss = 1e9
-    iter_count = 0
     loss_fn = nn.MSELoss()
     writer = SummaryWriter(log_dir=logdir)
 
-    eps = range(num_epoch)
     train_losses = []
     coarse_train_losses = []
-    with tqdm(total=len(num_train_iters), desc="Training") as pbar:
+    with tqdm(total=num_train_iters, desc="Training") as pbar:
         for i in range(num_train_iters):
             optimizer.zero_grad()
             model.train()
@@ -183,7 +122,7 @@ def main():
             if torch.all(mask == -999):
                 mask = None
             if mask is not None:
-                inpt_mask, tgt_mask = mask[:,:-1,:].to(device), mask[:,1:,:].float().to(device)
+                inpt_mask, tgt_mask = mask[:,:-1,:].float().to(device), mask[:,1:,:].float().to(device)
             else:
                 inpt_mask, tgt_mask = None, torch.ones_like(inpt).to(device)
             
@@ -200,13 +139,13 @@ def main():
                 torch.save(model.state_dict(),f"{outdir}/{model_name}_best.pt")
             
             pbar.set_description(f"Training, iter {i+1}, {loss.item():.3e}")
-            writer.add_scalar("IterLoss", loss.item(), iter_count)
+            writer.add_scalar("IterLoss", loss.item(), i)
 
-            if i+1 % save_every == 0:
+            if i==0 or (i+1) % save_every == 0:
                 torch.save(model.state_dict(),f"{outdir}/{model_name}_iter{i+1}.pt")
             
-            if i+1 % save_every_val == 0:
-                avg_loss = np.mean(train_losses[-save_every_val:])
+            if (i+1) % val_every == 0:
+                avg_loss = np.mean(train_losses[-val_every:])
                 if avg_loss < best_avg_loss:
                     best_avg_loss = avg_loss
                 coarse_train_losses.append(avg_loss)
@@ -230,46 +169,13 @@ def main():
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                 pbar.set_postfix_str(f"Train {avg_loss:.3e} (best {avg_loss:.3e}), Val {val_loss:.3e} (best {best_val_loss:.3e})")
-                writer.add_scalars("Losses", {"Train":avg_loss,"Val":val_loss}, i+1 // save_every_val)
+                writer.add_scalars("Losses", {"Train":avg_loss,"Val":val_loss}, (i+1) // val_every)
             
             pbar.update(1)
-
-            
-
-
-        for i in eps:
-            train_loss = np.mean(train_losses)
-            if train_loss < best_train_loss:
-                best_train_loss = train_loss
-            torch.save(local_best_state,f"{outdir}/{model_name}_best_epoch_{i+1}.pt")
-
-            model.eval()
-            val_losses = []
-            with torch.no_grad():
-                for batch in val_loader:
-                    input, target, context, mask = batch
-                    if torch.all(mask == -999):
-                        mask = None
-                    if mask is not None:
-                        inpt_mask, tgt_mask = mask[:,:-1,:].to(device), mask[:,1:,:].float().to(device)
-                    else:
-                        inpt_mask, tgt_mask = None, torch.ones_like(input).to(device)
-                    preds = model(input.to(device),mask=inpt_mask)
-                    loss = loss_fn(preds*tgt_mask,target.to(device)*tgt_mask)
-                    val_losses.append(loss.item())
-            val_loss = np.mean(val_losses)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-
-            # updating tqdm
-            pbar.set_postfix_str(f"Train {train_loss:.3e} (best {best_train_loss:.3e}), Val {val_loss:.3e} (best {best_val_loss:.3e})")
-            pbar.update(1)
-
-            # updating writer
-            writer.add_scalars("Losses", {"Train":train_loss,"Val":val_loss}, i+1)
             
     writer.close()
     return model
 
 if __name__ == "__main__":
-    main()
+    config = utils.load_config(sys.argv[1])
+    main(config)

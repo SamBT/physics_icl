@@ -3,6 +3,8 @@ import torch.nn as nn
 from model import GPT, GPTConfig
 import json
 import numpy as np
+from types import SimpleNamespace
+import yaml
 
 def load_model(name,date,epoch=None):
     src = f"trainings/{name}_{date}/"
@@ -59,3 +61,27 @@ def random_multiInterval(intervals):
     i = intervals[np.random.choice(len(intervals))]
     assert type(i) == tuple and len(i) == 2
     return i[0] + np.random.rand()*(i[1] - i[0])
+
+def load_config(file):
+    with open(file,"r") as fin:
+        config = yaml.safe_load(fin)
+    config = parse_config(config)
+    return config
+
+def tuplify(l):
+    if type(l[0]) == list:
+        assert np.all([len(li)==2 for li in l])
+        return [tuple(li) for li in l]
+    else:
+        assert len(l) == 2
+        return tuple(l)
+
+def parse_config(config):    
+    if config['parsing_params']['m_tuple']:
+        config['dataset_params']['m'] = tuplify(config['dataset_params']['m'])
+    if config['parsing_params']['k_tuple']:
+        config['dataset_params']['k'] = tuplify(config['dataset_params']['k'])
+    if config['parsing_params']['beta_tuple']:
+        config['dataset_params']['beta'] = tuplify(config['dataset_params']['beta'])
+    
+    return config

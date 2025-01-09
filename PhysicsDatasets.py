@@ -340,7 +340,7 @@ class DampedSHODatasetV2(IterableDataset):
         A = np.sqrt(x0**2 + (v0/w)**2)
         if self.min_amplitude is not None:
             if A < self.min_amplitude:
-                A = min_amplitude
+                A = self.min_amplitude
                 v0 = np.sign(v0)*np.sqrt(w**2*(A**2 - x0**2))
         
         # make time series data
@@ -349,7 +349,7 @@ class DampedSHODatasetV2(IterableDataset):
         # compute mask to restrict length if desired
         if self.vary_length:
             length = np.random.randint(self.min_seq_length,self.seq_len+1)
-            mask = (np.arange(self.seq_len) < length).astype(float).unsqueeze()
+            mask = (np.arange(self.seq_len) < length).astype(float)
         else:
             mask = -999 * np.ones(self.seq_len)
 
@@ -369,7 +369,10 @@ class DampedSHODatasetV2(IterableDataset):
     def __iter__(self):
         while True:
             inpt, target, context, mask = self.get_series()
-            yield torch.tensor(inpt), torch.tensor(target), torch.tensor(context), torch.tensor(mask).unsqueeze(-1)
+            yield torch.tensor(inpt, dtype=torch.float32), \
+                  torch.tensor(target,dtype=torch.float32), \
+                  torch.tensor(context,dtype=torch.float32), \
+                  torch.tensor(mask,dtype=torch.float32).unsqueeze(-1)
     
     
     def compute_damping_status(self,k,m,beta):
