@@ -15,6 +15,7 @@ import json
 import sys
 import utils
 import yaml
+from concurrent.futures import ThreadPoolExecutor
 
 def main(config):
     has_cuda = torch.cuda.is_available()
@@ -176,6 +177,14 @@ def main(config):
     writer.close()
     return model
 
-if __name__ == "__main__":
-    config = utils.load_config(sys.argv[1])
+def run(cfg_path):
+    config = utils.load_config(cfg_path)
     main(config)
+
+if __name__ == "__main__":
+    if len(sys.argv) > 2:
+        yamls = sys.argv[1:]
+        with ThreadPoolExecutor(max_workers=len(yamls)) as executor:
+            executor.map(run,yamls)
+    else:
+        run(sys.argv[1])

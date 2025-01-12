@@ -1,0 +1,50 @@
+parsing_params:
+  k_tuple: true
+  beta_tuple: true
+  m_tuple: true
+
+model_name: "default_continuous_mkb"
+
+model_params:
+  block_size: 1024
+  input_dim: 2
+  context_dim: null
+  n_layer: 8
+  n_head: 8
+  n_embd: 128
+  dropout: 0.0
+  bias: false
+  use_pe: false
+  use_rope: true
+
+dataset_params:
+  k: [10,20]
+  beta: [0,4]
+  m: [1,10]
+  dt: 0.1
+  seq_len: 100
+  min_seq_length: 20
+  vary_length: false
+  pin_amplitude: null
+  min_amplitude: 0.0
+  k_context: false
+
+training_params:
+  num_train_iters: 10_000
+  save_every: 1_000
+  val_every: 1_000
+  num_val_seqs: 10_000
+  bs: 128
+  bs_val: 1024
+
+opt_params:
+  lr: 5.0e-4
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  decay_lr: true
+  warmup_iter_frac: 0.05
+  lr_decay_iter_frac: 1.0
+  min_lr: 1.0e-6
+

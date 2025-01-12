@@ -5,6 +5,7 @@ import json
 import numpy as np
 from types import SimpleNamespace
 import yaml
+import os
 
 def load_model(name,date,epoch=None):
     src = f"trainings/{name}_{date}/"
@@ -41,6 +42,19 @@ def load_model(name,date,epoch=None):
 
     return model, kwargs
 
+def get_model_v2(config):
+    gpt_config = GPTConfig(**config['model_params'])
+    model = GPT(gpt_config)
+    return model
+
+def load_model_v2(config,tgt_dir,ckpt='best'):
+    models = [m for m in os.listdir(tgt_dir) if ckpt in m and '.pt' in m]
+    assert len(models) == 1
+    model = get_model_v2(config)
+    model.load_state_dict(torch.load(f"{tgt_dir}/{models[0]}",map_location='cpu'))
+    model.eval()
+    return model
+
 def random_intervals(intervals,num_samples):
     output = []
     num_per = num_samples//len(intervals)
@@ -64,7 +78,7 @@ def random_multiInterval(intervals):
 
 def load_config(file):
     with open(file,"r") as fin:
-        config = yaml.safe_load(fin)
+        config = yaml.load(fin,Loader=yaml.FullLoader)
     config = parse_config(config)
     return config
 

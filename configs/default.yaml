@@ -9,9 +9,9 @@ model_params:
   block_size: 1024
   input_dim: 2
   context_dim: null
-  n_layer: 4
-  n_head: 4
-  n_embd: 64
+  n_layer: 8
+  n_head: 8
+  n_embd: 128
   dropout: 0.0
   bias: false
   use_pe: false
