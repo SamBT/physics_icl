@@ -187,6 +187,8 @@ class GPTConfig:
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     use_pe: bool = False # True = use positional encoding
     use_rope: bool = True # True = use rotary positional embedding (RoPE)
+    tokenized: bool = False # False - only use if we want to tokenize real numbers
+    vocab_size: int = 1024
 
 class GPT(nn.Module):
 
@@ -197,13 +199,18 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Linear(config.input_dim, config.n_embd),
+            wte = nn.Embedding(config.vocab_size,config.n_embd) if config.tokenized else nn.Linear(config.input_dim, config.n_embd, bias=False),
             #wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
             #ctxe = nn.Linear(config.context_dim,config.n_embd)
         ))
+        if config.tokenized:
+            self.lm_head = nn.Linear(config.n_embd,config.vocab_size,bias=False)
+            self.transformer.wte.weight = self.lm_head.weight # weight tying
+        else:
+            self.lm_head = nn.Linear(config.n_embd, config.input_dim, bias=False)
 
         # configure positional embedding if desired
         if config.use_rope and config.use_pe:
@@ -221,8 +228,6 @@ class GPT(nn.Module):
             self.transformer['ctxe'] = nn.Linear(config.context_dim,config.n_embd)
         else:
             self.use_context = False
-
-        self.lm_head = nn.Linear(config.n_embd, config.input_dim, bias=False)
         
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
@@ -260,10 +265,13 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, context=None, targets=None, mask=None):
+    def forward(self, idx, context=None, mask=None):
         # idx has shape (b, t, n_embd), context has shape (b, n_ctx)
         device = idx.device
-        b, t, n_inp = idx.size()
+        if self.config.tokenized:
+            b, t = idx.size()
+        else:
+            b, t, n_inp = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t+1, dtype=torch.long, device=device) # shape (t+1) to account for additional context embedding
 
@@ -274,7 +282,7 @@ class GPT(nn.Module):
             tok_emb = torch.cat([ctx_emb,tok_emb],dim=1) # full input of shape (b, t+1, n_embd)
         
         # add vanilla positional embedding if using (if using RoPE, done at the level of the self-attention blocks)
-        if self. config.use_pe:
+        if self.config.use_pe:
             pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
             x = self.transformer.drop(tok_emb + pos_emb)
         else:
@@ -294,18 +302,7 @@ class GPT(nn.Module):
 
         # project outputs
         x = self.lm_head(x)
-        return x[:,1:,:] if self.use_context else x# don't return the extra token we added for the context vector
-
-        """if targets is not None:
-            # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-        else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
-            loss = None
-
-        return logits, loss"""
+        return x[:,1:,:] if self.use_context else x # don't return the extra token we added for the context vector
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

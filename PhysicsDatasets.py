@@ -284,7 +284,7 @@ class DampedSHODatasetXV(DampedSHODataset):
 class DampedSHODatasetV2(IterableDataset):
     def __init__(self, k=(10,20), m=(1,10), x0=(-1,1), v0=(-1,1), beta=(0,3.7), dt=0.1, 
                        seq_len=50, min_seq_length=20, pin_amplitude=None, min_amplitude=None, 
-                       k_context=False, vary_length=False):
+                       k_context=False, vary_length=False,xv=True):
         # physical parameters
         self.k = k
         self.m = m
@@ -301,6 +301,7 @@ class DampedSHODatasetV2(IterableDataset):
         self.tmax = self.dt * self.seq_len
         self.k_context = k_context
         self.vary_length = vary_length
+        self.xv = xv
 
     def get_params(self):
         # spring constant
@@ -360,9 +361,12 @@ class DampedSHODatasetV2(IterableDataset):
 
     def get_series(self):
         xt, vt, time, mask, context = self.generate_data()
-        xvt = np.concatenate([xt.reshape(-1,1),vt.reshape(-1,1)],axis=1)
-        inpt = xvt[:-1,:]
-        target = xvt[1:,:]
+        if self.xv:
+            vec = np.concatenate([xt.reshape(-1,1),vt.reshape(-1,1)],axis=1)
+        else:
+            vec = xt.reshape(-1,1)
+        inpt = vec[:-1,:]
+        target = vec[1:,:]
         return inpt, target, context, mask
 
 

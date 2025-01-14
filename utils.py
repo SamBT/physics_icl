@@ -99,3 +99,46 @@ def parse_config(config):
         config['dataset_params']['beta'] = tuplify(config['dataset_params']['beta'])
     
     return config
+
+class RealNumberTokenizer:
+    def __init__(self, num_bins, range_limit):
+        """
+        Tokenizer for real numbers using configurable binning.
+
+        Args:
+            num_bins (int): Number of bins to divide the range into.
+            range_limit (float): Symmetric range limit [-range_limit, range_limit].
+        """
+        self.num_bins = num_bins
+        self.range_limit = range_limit
+        self.bin_edges = torch.linspace(-range_limit, range_limit, num_bins + 1)  # Bin edges including overflow/underflow
+
+    def tokenize(self, values):
+        """
+        Tokenizes real numbers into bin indices.
+
+        Args:
+            values (torch.Tensor): Tensor of real numbers to tokenize.
+
+        Returns:
+            torch.Tensor: Tensor of bin indices (0 to num_bins-1).
+        """
+        # Assign each value to a bin
+        bin_indices = torch.bucketize(values, self.bin_edges) - 1  # `bucketize` returns indices relative to edges
+        # Clamp indices to valid bin range [0, num_bins-1]
+        bin_indices = torch.clamp(bin_indices, 0, self.num_bins - 1)
+        return bin_indices
+
+    def detokenize(self, bin_indices):
+        """
+        Converts bin indices back to representative real numbers.
+
+        Args:
+            bin_indices (torch.Tensor): Tensor of bin indices.
+
+        Returns:
+            torch.Tensor: Tensor of representative real numbers (bin centers).
+        """
+        bin_indices = torch.clamp(bin_indices, 0, self.num_bins - 1)
+        bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2  # Compute bin centers
+        return bin_centers[bin_indices]
