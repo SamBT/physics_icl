@@ -1,7 +1,7 @@
 parsing_params:
-  k_tuple: false
+  k_tuple: true
   beta_tuple: true
-  m_tuple: false
+  m_tuple: true
 
 model_name: "default"
 
@@ -9,21 +9,20 @@ model_params:
   block_size: 1024
   input_dim: 2
   context_dim: null
-  n_layer: 4
-  n_head: 4
-  n_embd: 32
+  n_layer: 8
+  n_head: 8
+  n_embd: 64
   dropout: 0.0
   bias: false
   use_pe: false
   use_rope: true
   tokenized: false
+  vocab_size: 128
 
 dataset_params:
   k: [10,20]
   beta: [0,4]
-  m:
-    - [1,4]
-    - [5,10]
+  m: [1,10]
   dt: 0.1
   seq_len: 100
   min_seq_length: 20
@@ -31,14 +30,16 @@ dataset_params:
   pin_amplitude: null
   min_amplitude: 0.0
   k_context: false
+  xv: true
 
 training_params:
-  num_train_iters: 50_000
-  save_every: 2_000
-  val_every: 2_000
+  num_train_iters: 20_000
+  save_every: 1_000
+  val_every: 1_000
   num_val_seqs: 10_000
   bs: 128
   bs_val: 1024
+  range_limit_tok: 2
 
 opt_params:
   lr: 5.0e-4
@@ -50,4 +51,3 @@ opt_params:
   warmup_iter_frac: 0.05
   lr_decay_iter_frac: 1.0
   min_lr: 1.0e-6
-

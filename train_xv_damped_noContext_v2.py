@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import math
 import numpy as np
@@ -40,6 +41,7 @@ def main(config):
     dset_params = config['dataset_params']
     model_params = config['model_params']
     opt_params = config['opt_params']
+    tokenized = model_params["tokenized"]
 
     # train/val info
     num_train_iters = train_params['num_train_iters']
@@ -67,6 +69,9 @@ def main(config):
     gpt_config = GPTConfig(**model_params)
     model = GPT(gpt_config)
     model.to(device)
+
+    if tokenized:
+        tokenizer = utils.RealNumberTokenizer(model_params['vocab_size'],train_params['range_limit_tok'])
     
     # compile model
     #model = torch.compile(model)
@@ -103,7 +108,10 @@ def main(config):
     best_val_loss = 1e9
     best_train_loss = 1e9
     best_avg_loss = 1e9
-    loss_fn = nn.MSELoss()
+    if tokenized:
+        loss_fn = F.cross_entropy
+    else:
+        loss_fn = nn.MSELoss()
     writer = SummaryWriter(log_dir=logdir)
 
     train_losses = []
@@ -114,6 +122,10 @@ def main(config):
             model.train()
             batch = next(loader)
             inpt, target, context, mask = batch
+            if tokenized:
+                inpt = tokenizer.tokenize(inpt).squeeze(-1)
+                target = tokenizer.tokenize(target).squeeze(-1)
+                mask = mask.squeeze(-1)
             
             if decay_lr:
                 lr = get_lr(i)
@@ -123,12 +135,16 @@ def main(config):
             if torch.all(mask == -999):
                 mask = None
             if mask is not None:
-                inpt_mask, tgt_mask = mask[:,:-1,:].float().to(device), mask[:,1:,:].float().to(device)
+                inpt_mask, tgt_mask = mask[:,:-1].float().to(device), mask[:,1:].float().to(device)
             else:
                 inpt_mask, tgt_mask = None, torch.ones_like(inpt).to(device)
             
             preds = model(inpt.to(device),mask=inpt_mask)
-            loss = loss_fn(preds*tgt_mask,target.to(device)*tgt_mask) # use target mask to zero out entries corresponding to sequence length padding
+            if tokenized:
+                loss = loss_fn(preds.view(-1,preds.size(-1)),target.view(-1).to(device),reduction='none')
+                loss = (tgt_mask.view(-1)*loss).mean()
+            else:
+                loss = loss_fn(preds*tgt_mask,target.to(device)*tgt_mask) # use target mask to zero out entries corresponding to sequence length padding
             loss.backward()
             if grad_clip != 0.0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -157,14 +173,22 @@ def main(config):
                     for j in range(num_val_iters):
                         batch = next(val_loader)
                         inpt, target, context, mask = batch
+                        if tokenized:
+                            inpt = tokenizer.tokenize(inpt).squeeze(-1)
+                            target = tokenizer.tokenize(target).squeeze(-1)
+                            mask = mask.squeeze(-1)
                         if torch.all(mask == -999):
                             mask = None
                         if mask is not None:
-                            inpt_mask, tgt_mask = mask[:,:-1,:].to(device), mask[:,1:,:].float().to(device)
+                            inpt_mask, tgt_mask = mask[:,:-1].to(device), mask[:,1:].float().to(device)
                         else:
                             inpt_mask, tgt_mask = None, torch.ones_like(inpt).to(device)
                         preds = model(inpt.to(device),mask=inpt_mask)
-                        loss = loss_fn(preds*tgt_mask,target.to(device)*tgt_mask)
+                        if tokenized:
+                            loss = loss_fn(preds.view(-1,preds.size(-1)),target.view(-1).to(device),reduction='none')
+                            loss = (tgt_mask.view(-1)*loss).mean()
+                        else:
+                            loss = loss_fn(preds*tgt_mask,target.to(device)*tgt_mask)
                         val_losses.append(loss.item())
                 val_loss = np.mean(val_losses)
                 if val_loss < best_val_loss:
