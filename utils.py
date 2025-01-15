@@ -47,11 +47,14 @@ def get_model_v2(config):
     model = GPT(gpt_config)
     return model
 
-def load_model_v2(config,tgt_dir,ckpt='best'):
-    models = [m for m in os.listdir(tgt_dir) if ckpt in m and '.pt' in m]
-    assert len(models) == 1
+def load_model_v2(config,tgt_dir,ckpt='best',name=None):
     model = get_model_v2(config)
-    model.load_state_dict(torch.load(f"{tgt_dir}/{models[0]}",map_location='cpu'))
+    if name is not None:
+        model.load_state_dict(torch.load(f"{tgt_dir}/{name}",map_location='cpu'))
+    else:
+        models = [m for m in os.listdir(tgt_dir) if ckpt in m and '.pt' in m]
+        assert len(models) == 1
+        model.load_state_dict(torch.load(f"{tgt_dir}/{models[0]}",map_location='cpu'))
     model.eval()
     return model
 
