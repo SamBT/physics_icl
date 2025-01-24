@@ -47,7 +47,8 @@ def get_model_v2(config):
     model = GPT(gpt_config)
     return model
 
-def load_model_v2(config,tgt_dir,ckpt='best',name=None):
+def load_model_v2(config,tgt_dir,ckpt='best',name=None,quiet=False):
+    config['model_params']['quiet'] = quiet
     model = get_model_v2(config)
     if name is not None:
         model.load_state_dict(torch.load(f"{tgt_dir}/{name}",map_location='cpu'))

@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --partition=iaifi_gpu
+#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
-#SBATCH -t 0-01:00
+#SBATCH -t 0-02:00
 #SBATCH -o slurm_logs/job_%j.out
 #SBATCH -e slurm_logs/job_%j.err
 

@@ -165,11 +165,21 @@ class DampedSHODataset(Dataset):
         # random k if desired
         if self.k is None:
             self.k = rand_k
+        elif isinstance(self.k,Iterable):
+            if type(k[0]) == tuple:
+                self.k = utils.random_intervals(self.k,self.num_trajectories)
+            else:
+                self.k = self.k
         else:
             self.k = self.k * torch.ones(self.num_trajectories)
         # random damping if desired
         if self.beta is None:
             self.beta = rand_beta
+        elif isinstance(self.beta,Iterable):
+            if type(self.beta[0]) == tuple:
+                self.beta = utils.random_intervals(self.beta,self.num_trajectories)
+            else:
+                self.beta = self.beta
         else:
             self.beta = self.beta * torch.ones(self.num_trajectories)
         # masses
@@ -282,16 +292,28 @@ class DampedSHODatasetXV(DampedSHODataset):
 
 
 class DampedSHODatasetV2(IterableDataset):
-    def __init__(self, k=(10,20), m=(1,10), x0=(-1,1), v0=(-1,1), beta=(0,3.7), dt=0.1, 
+    def __init__(self, k=(10,20), beta=(0,4), m=(1,10), x0=(-1,1), v0=(-1,1), w0=None, dt=0.1, 
                        seq_len=50, min_seq_length=20, pin_amplitude=None, min_amplitude=None, 
-                       k_context=False, vary_length=False,xv=True):
+                       k_context=False, vary_length=False, xv=True, underdamped=False, overdamped=False):
+        # some hard-coded values:
+        self.max_beta = self.get_max_param(beta) if self.get_max_param(beta) is not None else 4
+        self.max_k = self.get_max_param(k) if self.get_max_param(k) is not None else 20
+        self.max_m = self.get_max_param(m) if self.get_max_param(m) is not None else 10
         # physical parameters
         self.k = k
         self.m = m
+        self.beta = beta
         self.x0 = x0
         self.v0 = v0
-        self.beta = beta
-        self.dt = dt 
+        self.w0 = w0
+        self.dt = dt
+        self.use_w_directly = False if self.w0 is None else True
+        self.underdamped = underdamped
+        self.overdamped = overdamped
+        if self.underdamped or self.overdamped:
+            self.use_w_directly = True
+        if self.underdamped and self.overdamped:
+            print("Please don't ask for both underdamped AND overdamped data; just ask for neither!")
 
         # other parameters
         self.seq_len = seq_len
@@ -304,48 +326,65 @@ class DampedSHODatasetV2(IterableDataset):
         self.xv = xv
 
     def get_params(self):
-        # spring constant
-        k = self.sample_param(self.k)
-        m = self.sample_param(self.m)
         beta = self.sample_param(self.beta)
         x0 = self.sample_param(self.x0)
         v0 = self.sample_param(self.v0)
-        return k,m,beta,x0,v0
+        if self.use_w_directly:
+            if self.underdamped:
+                w0 = self.sample_param((beta,self.max_beta))
+            elif self.overdamped:
+                w0 = self.sample_param((0,beta))
+            else:
+                w0 = self.sample_param(self.w0)
+            k = None
+            m = None
+        else:
+            k = self.sample_param(self.k)
+            m = self.sample_param(self.m)
+            w0 = np.sqrt(k/m)
+        return k,m,beta,x0,v0,w0
+    
+    def get_max_param(self,p):
+        if isinstance(p,Iterable):
+            if type(p) == tuple:
+                return max(p)
+            elif type(p[0]) == tuple:
+                return max([max(pi) for pi in p])
+            else:
+                return max(p)
+        else:
+            return None
 
     def sample_param(self,p):
-        if type(p) == tuple:
-            assert len(p) == 2
-            return p[0] + np.random.rand()*(p[1]-p[0])
-        elif type(p) == float:
-            return p
-        elif isinstance(p,Iterable):
-            if type(p[0]) == tuple:
+        if isinstance(p,Iterable):
+            if type(p) == tuple:
+                assert len(p) == 2
+                return p[0] + np.random.rand()*(p[1]-p[0])
+            elif type(p[0]) == tuple:
                 assert np.all([len(pi) == 2 and type(pi) == tuple for pi in p])
                 return utils.random_multiInterval(p)
             else:
                 return np.random.choice(p)
         else:
-            print(f"Can't sample parameter in given format: {p}")
-            sys.exit()
+            return p
 
     def generate_data(self):
-        k,m,beta,x0,v0 = self.get_params()
+        k,m,beta,x0,v0,w0 = self.get_params()
 
         # compute frequency & change v0 to fix amplitude if requested
-        w = np.sqrt(k/m)
         if self.pin_amplitude is not None:
             if self.min_amplitude is not None:
                 assert self.pin_amplitude >= self.min_amplitude
             sign = np.sign(v0)
-            v0 = sign * np.sqrt(w**2*(self.pin_amplitude**2 - x0**2))
-        A = np.sqrt(x0**2 + (v0/w)**2)
+            v0 = sign * np.sqrt(w0**2*(self.pin_amplitude**2 - x0**2))
+        A = np.sqrt(x0**2 + (v0/w0)**2)
         if self.min_amplitude is not None:
             if A < self.min_amplitude:
                 A = self.min_amplitude
-                v0 = np.sign(v0)*np.sqrt(w**2*(A**2 - x0**2))
+                v0 = np.sign(v0)*np.sqrt(w0**2*(A**2 - x0**2))
         
         # make time series data
-        xt, vt, time = pdata2.generate_damped_harmonic_data(m,k,beta,x0,v0,self.dt,self.seq_len)
+        xt, vt, time = pdata2.generate_damped_harmonic_data(w0,beta,x0,v0,self.dt,self.seq_len)
 
         # compute mask to restrict length if desired
         if self.vary_length:

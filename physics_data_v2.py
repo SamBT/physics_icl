@@ -1,5 +1,5 @@
 import numpy as np
-from collections.abc import Iterable
+import sys
 
 # Generate synthetic data: simple harmonic motion
 def generate_harmonic_data(m, k, x0, v0, dt, num_samples):
@@ -12,12 +12,11 @@ def generate_harmonic_data(m, k, x0, v0, dt, num_samples):
     velocity = -w0*c1*np.sin(w0*time) + w0*c2*np.cos(w0*time)
     return position, velocity, time
 
-def generate_damped_harmonic_data(m, k, beta, x0, v0, dt, num_samples):
-    w0 = np.sqrt(k/m)
+def generate_damped_harmonic_data(w0, beta, x0, v0, dt, num_samples):
     w1 = np.sqrt(np.abs(w0**2 - beta**2))
 
     if beta == 0:
-        position, velocity, time = generate_harmonic_data(m,k,x0,v0,dt,num_samples)
+        position, velocity, time = sol_undamped(x0,v0,w0,dt,num_samples)
     elif beta > 0 and beta < w0:
         position, velocity, time = sol_underdamped(x0,v0,w1,beta,num_samples,dt)
     elif beta == w0:
@@ -25,9 +24,17 @@ def generate_damped_harmonic_data(m, k, beta, x0, v0, dt, num_samples):
     elif beta > w0:
         position, velocity, time = sol_overdamped(x0,v0,w1,beta,num_samples,dt)
     else:
-        print(f"Error: cannot generate harmonic data with parameters m = {m}, k = {k}, beta = {beta}, x0 = {x0}, v0 = {v0}, dt = {dt}")
+        print(f"Error: cannot generate harmonic data with parameters w0 = {w0}, beta = {beta}, x0 = {x0}, v0 = {v0}, dt = {dt}")
         sys.exit()
 
+    return position, velocity, time
+
+def sol_undamped(x0,v0,w0,num_samples,dt):
+    c1 = x0
+    c2 = v0/w0
+    time = np.arange(0,num_samples)*dt
+    position = c1 * np.cos(w0*time) + c2 * np.sin(w0*time)
+    velocity = -w0*c1*np.sin(w0*time) + w0*c2*np.cos(w0*time)
     return position, velocity, time
 
 def sol_underdamped(x0,v0,w1,beta,num_samples,dt):

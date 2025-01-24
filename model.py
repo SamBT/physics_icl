@@ -189,6 +189,7 @@ class GPTConfig:
     use_rope: bool = True # True = use rotary positional embedding (RoPE)
     tokenized: bool = False # False - only use if we want to tokenize real numbers
     vocab_size: int = 1024
+    quiet: bool = False
 
 class GPT(nn.Module):
 
@@ -217,10 +218,12 @@ class GPT(nn.Module):
             print("Error - shouldn't use RoPE and vanilla PE at the same time!")
             sys.exit()
         if config.use_pe:
-            print("Using vanilla positional embedding")
+            if not self.config.quiet:
+                print("Using vanilla positional embedding")
             self.transformer["wpe"] = nn.Embedding(config.block_size, config.n_embd)
         if config.use_rope:
-            print("Using RoPE")
+            if not self.config.quiet:
+                print("Using RoPE")
 
         # configure to take context if desired
         if config.context_dim is not None and config.context_dim> 0:
@@ -243,7 +246,8 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        if not self.config.quiet:
+            print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
     def get_num_params(self, non_embedding=True):
         """
