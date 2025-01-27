@@ -7,15 +7,15 @@ model_name: "default"
 
 model_params:
   block_size: 1024
-  input_dim: 2
+  input_dim: 1
   context_dim: null
-  n_layer: 8
+  n_layer: 4
   n_head: 8
-  n_embd: 64
+  n_embd: 128
   dropout: 0.0
   bias: false
   use_pe: false
-  use_rope: true
+  use_rope: false
   tokenized: false
   vocab_size: 128
 
@@ -30,7 +30,7 @@ dataset_params:
   pin_amplitude: null
   min_amplitude: 0.0
   k_context: false
-  xv: true
+  xv: false
 
 training_params:
   num_train_iters: 20_000
