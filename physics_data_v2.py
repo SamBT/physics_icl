@@ -16,7 +16,7 @@ def generate_damped_harmonic_data(w0, beta, x0, v0, dt, num_samples):
     w1 = np.sqrt(np.abs(w0**2 - beta**2))
 
     if beta == 0:
-        position, velocity, time = sol_undamped(x0,v0,w0,dt,num_samples)
+        position, velocity, time = sol_undamped(x0,v0,w0,num_samples,dt)
     elif beta > 0 and beta < w0:
         position, velocity, time = sol_underdamped(x0,v0,w1,beta,num_samples,dt)
     elif beta == w0:

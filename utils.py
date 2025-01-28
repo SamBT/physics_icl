@@ -83,7 +83,7 @@ def random_multiInterval(intervals):
 def load_config(file):
     with open(file,"r") as fin:
         config = yaml.load(fin,Loader=yaml.FullLoader)
-    config = parse_config(config)
+    #config = parse_config(config)
     return config
 
 def tuplify(l):

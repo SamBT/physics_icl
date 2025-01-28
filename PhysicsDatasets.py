@@ -336,8 +336,8 @@ class DampedSHODatasetV2(IterableDataset):
                 w0 = self.sample_param((0,beta))
             else:
                 w0 = self.sample_param(self.w0)
-            k = None
-            m = None
+            k = -1
+            m = -1
         else:
             k = self.sample_param(self.k)
             m = self.sample_param(self.m)
