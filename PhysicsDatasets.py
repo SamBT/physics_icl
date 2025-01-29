@@ -294,7 +294,7 @@ class DampedSHODatasetXV(DampedSHODataset):
 class DampedSHODatasetV2(IterableDataset):
     def __init__(self, k=(10,20), beta=(0,4), m=(1,10), x0=(-1,1), v0=(-1,1), w0=None, dt=0.1, 
                        seq_len=50, min_seq_length=20, pin_amplitude=None, min_amplitude=None, 
-                       k_context=False, vary_length=False, xv=True, underdamped=False, overdamped=False):
+                       k_context=False, vary_length=False, xv=False, underdamped=False, overdamped=False):
         # some hard-coded values:
         self.max_beta = self.get_max_param(beta) if self.get_max_param(beta) is not None else 4
         self.max_k = self.get_max_param(k) if self.get_max_param(k) is not None else 20
@@ -416,6 +416,21 @@ class DampedSHODatasetV2(IterableDataset):
                   torch.tensor(target,dtype=torch.float32), \
                   torch.tensor(context,dtype=torch.float32), \
                   torch.tensor(mask,dtype=torch.float32).unsqueeze(-1)
+            
+    def sample(self,N,tokenizer=None):
+        inpts,targets,contexts,masks = [],[],[],[]
+        for i in range(N):
+            ipt,t,c,m = self.get_series()
+            inpts.append(torch.tensor(ipt,dtype=torch.float32).unsqueeze(0))
+            targets.append(torch.tensor(t,dtype=torch.float32).unsqueeze(0))
+            contexts.append(torch.tensor(c,dtype=torch.float32).unsqueeze(0))
+            masks.append(torch.tensor(m,dtype=torch.float32).unsqueeze(0))
+        inpts = torch.cat(inpts,dim=0)
+        targets = torch.cat(targets,dim=0)
+        if tokenizer is not None:
+            inpts = tokenizer.tokenize(inpts.squeeze(-1))
+            targets = tokenizer.tokenize(targets.squeeze(-1))
+        return inpts, targets
     
     
     def compute_damping_status(self,k,m,beta):

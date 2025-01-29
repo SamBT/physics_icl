@@ -4,9 +4,9 @@ model_params:
   block_size: 1024
   input_dim: 1
   context_dim: null
-  n_layer: 4
-  n_head: 8
-  n_embd: 128
+  n_layer: 2
+  n_head: 4
+  n_embd: 64
   dropout: 0.0
   bias: false
   use_pe: false
@@ -19,7 +19,7 @@ dataset_params:
   beta: !!python/tuple [0,4]
   m: !!python/tuple [1,10]
   dt: 0.1
-  seq_len: 256
+  seq_len: 100
   min_seq_length: 20
   vary_length: false
   pin_amplitude: null

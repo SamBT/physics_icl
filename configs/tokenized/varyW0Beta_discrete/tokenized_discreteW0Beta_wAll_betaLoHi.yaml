@@ -11,10 +11,10 @@ dataset_params:
   min_amplitude: 0.0
   min_seq_length: 20
   pin_amplitude: null
-  seq_len: 256
+  seq_len: 100
   vary_length: false
   w0:
-  - 0.5
+  - 0.1
   - 1
   - 2
   - 3
@@ -27,9 +27,9 @@ model_params:
   context_dim: null
   dropout: 0.0
   input_dim: 1
-  n_embd: 128
-  n_head: 8
-  n_layer: 4
+  n_embd: 64
+  n_head: 4
+  n_layer: 2
   tokenized: true
   use_pe: false
   use_rope: true

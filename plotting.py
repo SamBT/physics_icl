@@ -26,7 +26,7 @@ def load_all_models(model_name,base_dir='trainings',quiet=True):
     iter_models = {}
     iter_ckpts = []
     for m in all_models:
-        n_iter = int(re.search("iter(\d+)",m).group(1))
+        n_iter = int(re.search("iter(\\d+)",m).group(1))
         iter_models[n_iter] = utils.load_model_v2(config,model_dir,name=m,quiet=quiet)
         iter_ckpts.append(n_iter)
     iter_ckpts = sorted(iter_ckpts)    
@@ -60,6 +60,15 @@ def make_dataset(masses,ks,betas,config,seq_len,num_trajectories_per,xv=False,to
 
     return data, shape
 
+def get_samples(dataset,N):
+    output = []
+    iter_d = iter(dataset)
+    for i in range(N):
+        output.append(next(iter_d))
+    inpt = torch.cat([o[0].unsqueeze(0) for o in output],dim=0)
+    target = torch.cat([o[1].unsqueeze(0) for o in output],dim=0)
+    return inpt, target
+
 def evaluate(model,data,shape,device,metric="cross_entropy",bs=10000):
     losses = []
     model = model.to(device)
@@ -83,7 +92,7 @@ def load_evaluations(model,base_dir="trainings"):
     data = {}
     model_dir = get_latest_model_dir(model,base_dir=base_dir)
     results = [f for f in os.listdir(model_dir) if "iter" in f and ".npy" in f]
-    n_iters = [int(re.search("iter(\d+)",m).group(1)) for m in results]
+    n_iters = [int(re.search("iter(\\d+)",m).group(1)) for m in results]
     for n_iter in n_iters:
         data[n_iter] = np.load(f"{model_dir}/eval_iter{n_iter}.npy")
 
