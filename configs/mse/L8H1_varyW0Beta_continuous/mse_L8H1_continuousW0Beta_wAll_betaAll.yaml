@@ -1,0 +1,49 @@
+dataset_params:
+  beta: !!python/tuple
+  - 0
+  - 4
+  dt: 0.1
+  k: null
+  k_context: false
+  m: null
+  min_amplitude: 0.0
+  min_seq_length: 20
+  pin_amplitude: null
+  seq_len: 100
+  vary_length: false
+  w0: !!python/tuple
+  - 0.1
+  - 4
+  xv: false
+model_name: mse_L8H1_continuousW0Beta_wAll_betaAll
+model_params:
+  bias: false
+  block_size: 1024
+  context_dim: null
+  dropout: 0.0
+  input_dim: 1
+  n_embd: 64
+  n_head: 1
+  n_layer: 8
+  tokenized: false
+  use_pe: false
+  use_rope: false
+  vocab_size: 128
+opt_params:
+  beta1: 0.9
+  beta2: 0.95
+  decay_lr: true
+  grad_clip: 1.0
+  lr: 0.0005
+  lr_decay_iter_frac: 1.0
+  min_lr: 1.0e-06
+  warmup_iter_frac: 0.05
+  weight_decay: 0.01
+training_params:
+  bs: 128
+  bs_val: 1024
+  num_train_iters: 20000
+  num_val_seqs: 10000
+  range_limit_tok: 2
+  save_every: 1000
+  val_every: 1000

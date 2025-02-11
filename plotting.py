@@ -27,6 +27,8 @@ def load_all_models(model_name,base_dir='trainings',quiet=True):
     iter_ckpts = []
     for m in all_models:
         n_iter = int(re.search("iter(\\d+)",m).group(1))
+        if n_iter == 1:
+            continue
         iter_models[n_iter] = utils.load_model_v2(config,model_dir,name=m,quiet=quiet)
         iter_ckpts.append(n_iter)
     iter_ckpts = sorted(iter_ckpts)    

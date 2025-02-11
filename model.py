@@ -56,6 +56,9 @@ class CausalSelfAttention(nn.Module):
         self.use_rope = config.use_rope
         if self.use_rope:
             self.create_rope_cache()
+        
+        # attribute to store attention mask, so we can retrieve it if we want
+        self.attn_map = None
     
     def create_rope_cache(self,base=10_000):
         dim=self.n_embd_head
@@ -94,7 +97,7 @@ class CausalSelfAttention(nn.Module):
         x_out = x_out.flatten(3)
         return x_out.type_as(x)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, return_attn=False):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -113,7 +116,7 @@ class CausalSelfAttention(nn.Module):
             v = v.view(B, T, self.n_head, self.n_embd_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
+        if self.flash and not return_attn:
             # efficient attention using Flash Attention CUDA kernels
             #if mask is not None:
             #    expanded_mask = mask[:,None,None,:]
@@ -133,12 +136,23 @@ class CausalSelfAttention(nn.Module):
                 y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
                 
         else:
+            # set up attention mask
+            attn_mask = torch.zeros(B,T,T,dtype=q.dtype).to(q)
+            causal_mask = torch.ones(T,T).tril(diagonal=0).unsqueeze(0).to(q)
+            if mask is not None:
+                causal_mask = (mask.transpose(1,2) * causal_mask).bool()
+            attn_mask = attn_mask.masked_fill(causal_mask.logical_not(),float("-inf"))
+
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            att = att + attn_mask
+            #att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+
+            # store att map if we want to access it later
+            self.attn_map = att.detach().cpu()
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
@@ -170,8 +184,8 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x, mask=None):
-        x = x + self.attn(self.ln_1(x),mask=mask)
+    def forward(self, x, mask=None, return_attn=False):
+        x = x + self.attn(self.ln_1(x),mask=mask,return_attn=return_attn)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -269,7 +283,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, context=None, mask=None):
+    def forward(self, idx, context=None, mask=None, return_attn=False):
         # idx has shape (b, t, n_embd), context has shape (b, n_ctx)
         device = idx.device
         if self.config.tokenized:
@@ -301,12 +315,17 @@ class GPT(nn.Module):
             padded_mask = mask
         
         for block in self.transformer.h:
-            x = block(x,mask=padded_mask)
+            x = block(x,mask=padded_mask,return_attn=return_attn)
         x = self.transformer.ln_f(x)
 
         # project outputs
         x = self.lm_head(x)
-        return x[:,1:,:] if self.use_context else x # don't return the extra token we added for the context vector
+
+        if return_attn:
+            return [b.attn.attn_map for b in self.transformer.h]
+            #return self.transformer.h[-1].attn.attn_map
+        else:
+            return x[:,1:,:] if self.use_context else x # don't return the extra token we added for the context vector
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

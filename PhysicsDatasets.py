@@ -320,7 +320,6 @@ class DampedSHODatasetV2(IterableDataset):
         self.min_seq_length = min_seq_length
         self.pin_amplitude = pin_amplitude
         self.min_amplitude = min_amplitude
-        self.tmax = self.dt * self.seq_len
         self.k_context = k_context
         self.vary_length = vary_length
         self.xv = xv
@@ -370,6 +369,7 @@ class DampedSHODatasetV2(IterableDataset):
 
     def generate_data(self):
         k,m,beta,x0,v0,w0 = self.get_params()
+        dt = self.sample_param(self.dt)
 
         # compute frequency & change v0 to fix amplitude if requested
         if self.pin_amplitude is not None:
@@ -384,7 +384,7 @@ class DampedSHODatasetV2(IterableDataset):
                 v0 = np.sign(v0)*np.sqrt(w0**2*(A**2 - x0**2))
         
         # make time series data
-        xt, vt, time = pdata2.generate_damped_harmonic_data(w0,beta,x0,v0,self.dt,self.seq_len)
+        xt, vt, time = pdata2.generate_damped_harmonic_data(w0,beta,x0,v0,dt,self.seq_len)
 
         # compute mask to restrict length if desired
         if self.vary_length:

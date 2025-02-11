@@ -146,3 +146,26 @@ class RealNumberTokenizer:
         bin_indices = torch.clamp(bin_indices, 0, self.num_bins - 1)
         bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2  # Compute bin centers
         return bin_centers[bin_indices]
+    
+def forecast(model,input,n_steps,n_ctx,tokenized=False):
+    inpt_sel = input[:,:n_ctx]
+    with torch.no_grad():
+        for i in range(n_steps):
+            pred = model(inpt_sel)
+            if tokenized:
+                pred = torch.argmax(pred,dim=-1)
+            inpt_sel = torch.cat([inpt_sel,pred[:,-1:]],dim=1)
+    return inpt_sel
+
+def get_freqs(series,dt):
+    fft_result = np.fft.fft(series)
+    sampling_rate = 1.0/dt
+    frequencies = np.fft.fftfreq(len(series), d=1/sampling_rate)
+    magnitude = np.abs(fft_result)
+    positive_freqs = frequencies[:len(frequencies)//2]  # Only positive frequencies
+    positive_magnitude = magnitude[:len(magnitude)//2]  # Corresponding magnitudes
+    dominant_freq = positive_freqs[np.argmax(positive_magnitude)]*2*np.pi
+
+    print(f"Dominant w0: {dominant_freq}")
+    
+    return dominant_freq
