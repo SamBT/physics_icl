@@ -17,8 +17,11 @@ def get_latest_model_dir(model_name,base_dir='trainings'):
     return model_dir
 
 
-def load_all_models(model_name,base_dir='trainings',quiet=True):
-    model_dir = get_latest_model_dir(model_name,base_dir=base_dir)
+def load_all_models(model_name,base_dir='trainings',quiet=True,version=None):
+    if version is None:
+        model_dir = get_latest_model_dir(model_name,base_dir=base_dir)
+    else:
+        model_dir = f"{base_dir}/{model_name}/{version}/"
 
     config = utils.load_config(f"{model_dir}/config.yaml")
     best_model = utils.load_model_v2(config,model_dir,ckpt='best',quiet=quiet)

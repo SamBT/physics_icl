@@ -7,7 +7,7 @@ dataset_params:
   min_amplitude: 0.0
   min_seq_length: 20
   pin_amplitude: null
-  seq_len: 100
+  seq_len: 256
   vary_length: false
   w0:
   - !!python/tuple
@@ -26,7 +26,7 @@ model_params:
   input_dim: 1
   n_embd: 64
   n_head: 4
-  n_layer: 2
+  n_layer: 4
   tokenized: false
   use_pe: false
   use_rope: false

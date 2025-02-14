@@ -1,7 +1,7 @@
 trainings/**/*best_epoch_*.pt
-__pycache__
+**/__pycache__
 **/.ipynb_checkpoints/
 nanoGPT
 **/*.png
 **/*.pdf
-.DS_Store
+**/.DS_Store
