@@ -4,4 +4,5 @@ trainings/**/*best_epoch_*.pt
 nanoGPT
 **/*.png
 **/*.pdf
+**/*.gif
 **/.DS_Store
