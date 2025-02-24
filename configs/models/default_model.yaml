@@ -1,0 +1,15 @@
+name: "default_model"
+GPT:
+  block_size: 1024
+  input_dim: 1
+  context_dim: null
+  n_layer: 4
+  n_head: 4
+  n_embd: 64
+  dropout: 0.0
+  bias: false
+  use_pe: false
+  use_rope: true
+  tokenized: false
+  range_limit_tok: 1.2
+  vocab_size: 128

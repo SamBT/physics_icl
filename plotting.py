@@ -6,6 +6,25 @@ from datetime import datetime
 import os
 import re
 from PhysicsDatasets import DampedSHODatasetXV
+from model import GPT, GPTConfig
+
+
+def get_model(config):
+    gpt_config = GPTConfig(**config['model_params'])
+    model = GPT(gpt_config)
+    return model
+
+def load_model(config,tgt_dir,ckpt='best',name=None,quiet=False):
+    config['model_params']['quiet'] = quiet
+    model = get_model(config)
+    if name is not None:
+        model.load_state_dict(torch.load(f"{tgt_dir}/{name}",map_location='cpu'))
+    else:
+        models = [m for m in os.listdir(tgt_dir) if ckpt in m and '.pt' in m]
+        assert len(models) == 1
+        model.load_state_dict(torch.load(f"{tgt_dir}/{models[0]}",map_location='cpu'))
+    model.eval()
+    return model
 
 
 def get_latest_model_dir(model_name,base_dir='trainings'):
@@ -24,7 +43,7 @@ def load_all_models(model_name,base_dir='trainings',quiet=True,version=None):
         model_dir = f"{base_dir}/{model_name}/{version}/"
 
     config = utils.load_config(f"{model_dir}/config.yaml")
-    best_model = utils.load_model_v2(config,model_dir,ckpt='best',quiet=quiet)
+    best_model = load_model(config,model_dir,ckpt='best',quiet=quiet)
     all_models = [f for f in os.listdir(model_dir) if '.pt' in f and 'iter' in f]
     iter_models = {}
     iter_ckpts = []
@@ -32,7 +51,7 @@ def load_all_models(model_name,base_dir='trainings',quiet=True,version=None):
         n_iter = int(re.search("iter(\\d+)",m).group(1))
         if n_iter == 1:
             continue
-        iter_models[n_iter] = utils.load_model_v2(config,model_dir,name=m,quiet=quiet)
+        iter_models[n_iter] = load_model(config,model_dir,name=m,quiet=quiet)
         iter_ckpts.append(n_iter)
     iter_ckpts = sorted(iter_ckpts)    
 

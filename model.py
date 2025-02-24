@@ -117,20 +117,11 @@ class CausalSelfAttention(nn.Module):
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash and not return_attn:
-            # efficient attention using Flash Attention CUDA kernels
-            #if mask is not None:
-            #    expanded_mask = mask[:,None,None,:]
-            #    y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=expanded_mask, dropout_p=self.dropout if self.training else 0, is_causal=True)
-            #else:
-            #    y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
             if mask is not None:
                 attn_mask = torch.zeros(B,T,T,dtype=q.dtype).to(q)
                 causal_mask = torch.ones(T,T).tril(diagonal=0).unsqueeze(0).to(q)
                 full_mask = (mask.transpose(1,2) * causal_mask).bool() # (B,1,T) * (1,T,T) -> (B,T,T)
                 attn_mask = attn_mask.masked_fill(full_mask.logical_not(),float("-inf"))[:,None,:,:] # add additional axis to broadcast to nhead
-                #print(mask.shape)
-                #print(attn_mask.shape)
-                #print(q.shape,k.shape,v.shape)
                 y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=self.dropout if self.training else 0)
             else:
                 y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
@@ -202,6 +193,7 @@ class GPTConfig:
     use_pe: bool = False # True = use positional encoding
     use_rope: bool = True # True = use rotary positional embedding (RoPE)
     tokenized: bool = False # False - only use if we want to tokenize real numbers
+    range_limit_tok: int = 2
     vocab_size: int = 1024
     quiet: bool = False
 

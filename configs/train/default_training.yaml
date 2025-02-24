@@ -1,0 +1,8 @@
+name: "default_training"
+seq_len: 128
+num_train_iters: 100_000
+save_every: 1_000
+val_every: 1_000
+num_val_seqs: 10_000
+bs: 128
+bs_val: 1024

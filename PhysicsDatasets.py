@@ -294,7 +294,8 @@ class DampedSHODatasetXV(DampedSHODataset):
 class DampedSHODatasetV2(IterableDataset):
     def __init__(self, k=(10,20), beta=(0,4), m=(1,10), x0=(-1,1), v0=(-1,1), w0=None, dt=0.1, 
                        seq_len=50, min_seq_length=20, pin_amplitude=None, min_amplitude=None, 
-                       k_context=False, vary_length=False, xv=False, underdamped=False, overdamped=False):
+                       k_context=False, vary_length=False, xv=False, underdamped=False, overdamped=False,
+                       instance_norm=False,**kwargs):
         # some hard-coded values:
         self.max_beta = self.get_max_param(beta) if self.get_max_param(beta) is not None else 4
         self.max_k = self.get_max_param(k) if self.get_max_param(k) is not None else 20
@@ -310,6 +311,7 @@ class DampedSHODatasetV2(IterableDataset):
         self.use_w_directly = False if self.w0 is None else True
         self.underdamped = underdamped
         self.overdamped = overdamped
+        self.instance_norm = instance_norm
         if self.underdamped or self.overdamped:
             self.use_w_directly = True
         if self.underdamped and self.overdamped:
@@ -357,11 +359,19 @@ class DampedSHODatasetV2(IterableDataset):
     def sample_param(self,p):
         if isinstance(p,Iterable):
             if type(p) == tuple:
-                assert len(p) == 2
-                return p[0] + np.random.rand()*(p[1]-p[0])
+                assert len(p) == 2 or len(p) == 3
+                if len(p) == 2:
+                    return p[0] + np.random.rand()*(p[1]-p[0])
+                else:
+                    return np.random.choice(np.linspace(p[0],p[1],p[2]))
             elif type(p[0]) == tuple:
-                assert np.all([len(pi) == 2 and type(pi) == tuple for pi in p])
-                return utils.random_multiInterval(p)
+                isRanges =  np.all([len(pi) == 2 and type(pi) == tuple for pi in p])
+                isLinspaces = np.all([len(pi) == 3 and type(pi) == tuple for pi in p])
+                assert isRanges or isLinspaces
+                if isRanges:
+                    return utils.random_multiInterval(p)
+                if isLinspaces:
+                    return utils.random_multiLinspace(p)
             else:
                 return np.random.choice(p)
         else:
@@ -404,6 +414,10 @@ class DampedSHODatasetV2(IterableDataset):
             vec = np.concatenate([xt.reshape(-1,1),vt.reshape(-1,1)],axis=1)
         else:
             vec = xt.reshape(-1,1)
+        
+        if self.instance_norm:
+            vec = (vec - vec.mean(axis=0))/vec.std(axis=0)
+
         inpt = vec[:-1,:]
         target = vec[1:,:]
         return inpt, target, context, mask
